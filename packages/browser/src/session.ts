@@ -64,15 +64,27 @@ export class BrowserSession {
   /** Take an atomic DOM snapshot. Fails closed if the page cannot be observed. */
   async observe(): Promise<BrowserSnapshot> {
     this.assertOpen();
-    const result = await this.cdp.call<{ result?: { value?: BrowserSnapshot }; exceptionDetails?: unknown }>(
-      'Runtime.evaluate',
-      { expression: SNAPSHOT_SCRIPT, returnByValue: true },
-      this.sessionId,
-    );
-    if (result.exceptionDetails || !result.result?.value) {
-      throw new BrowserSessionError('Could not observe browser page — failing closed');
+    // A click can briefly leave Chromium between DOM commits (especially when
+    // an SPA updates a live region). Retry observation without retrying the
+    // action itself. This prevents a successful click from being reported as
+    // a failed browser goal while preserving fail-closed behaviour.
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const result = await this.cdp.call<{ result?: { value?: BrowserSnapshot }; exceptionDetails?: unknown }>(
+          'Runtime.evaluate',
+          { expression: SNAPSHOT_SCRIPT, returnByValue: true },
+          this.sessionId,
+        );
+        if (!result.exceptionDetails && result.result?.value) return result.result.value;
+        lastError = result.exceptionDetails;
+      } catch (error) {
+        lastError = error;
+      }
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 75 * (attempt + 1)));
     }
-    return result.result.value;
+    const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
+    throw new BrowserSessionError(`Could not observe browser page — failing closed${detail}`);
   }
 
   /** Navigate to a URL and wait for the page to finish loading. */

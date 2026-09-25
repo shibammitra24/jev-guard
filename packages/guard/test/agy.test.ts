@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { agyAdapter } from '../src/adapters/agy';
+import { agyAdapter, BROWSER_RESULT_PREFIX } from '../src/adapters/agy';
 
 const FIXTURES_DIR = join(__dirname, 'fixtures');
 
@@ -27,7 +27,14 @@ describe('Antigravity adapter', () => {
     expect(agyAdapter.render({ verdict: 'ask', source: 'fallback', latencyMs: 1, reason: 'offline' }))
       .toBe('{"decision":"deny","reason":"offline"}');
     expect(agyAdapter.render({ verdict: 'deny', source: 'jev', latencyMs: 1, reason: 'blocked' }))
-      .toBe('{"decision":"deny","reason":"blocked"}');
+      .toBe('{"decision":"deny","reason":"[BLOCKED BEFORE EXECUTION] blocked"}');
+  });
+
+  it('renders a browser task result as output, never as a safety block', () => {
+    const out = JSON.parse(agyAdapter.render({ verdict: 'deny', source: 'browser', latencyMs: 1, reason: 'Jev Fast Browser done: clicked' })) as { decision: string; reason: string };
+    expect(out.decision).toBe('deny');
+    expect(out.reason).toBe(`${BROWSER_RESULT_PREFIX} Jev Fast Browser done: clicked`);
+    expect(out.reason).not.toContain('BLOCKED BEFORE EXECUTION');
   });
 });
 

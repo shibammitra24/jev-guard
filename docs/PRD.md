@@ -6,7 +6,7 @@
 | Owner | Shibam Mitra |
 | Status | Draft v2 — hackathon build |
 | Demo environment | **Google Antigravity** (IDE + its built-in agent), with Claude Code in the integrated terminal |
-| Last updated | 21 Sep 2026 |
+| Last updated | 25 Sep 2026 |
 
 ---
 
@@ -166,6 +166,15 @@ Every decision is appended to `~/.jev/decisions.jsonl` with: timestamp, agent, t
 - Header stats: calls guarded, blocked, asked, and p50 latency.
 - A status bar item shows the last verdict and its latency.
 
+### 8.1 Allow / deny list
+
+The console shows every tool and dangerous command category the guard knows about, each with a toggle switch, so a developer can see and change the guard's policy without editing JSON by hand.
+
+- **Tool toggles** (`list_dir`/`view_file`/`Read`/`Glob`/`Grep`, `write_to_file`/`Write`/`Edit`/`MultiEdit`, `run_command`/`Bash`, `read_url_content`/`WebFetch`, `browser_subagent`) default **on**. Turning one off makes the guard deny every call to that tool immediately, before Jev is ever asked — a per-tool kill switch.
+- **Dangerous-category toggles** (destructive file/git operations, exfiltration, secret/credential access, writes outside the workspace, guard-config tampering) default **off**, matching the guard's existing hard-block behaviour for these classes (§7.4's deterministic pre-filter). Turning one on does not blanket-allow it — it removes the automatic block and lets the normal prefilter/Jev evaluation judge that specific call instead.
+- Toggles persist to `~/.jev/tool-policy.json` and take effect on the next tool call; no reload or reinstall is needed.
+- A tool toggled off always wins, even if its dangerous category has been toggled on (e.g. shell commands turned off entirely still deny `rm -rf`, regardless of the destructive-category switch).
+
 ## 9. Surface 3 — Intent Router (secondary)
 
 This is the command palette from v1, kept at a smaller scope.
@@ -199,6 +208,7 @@ This is the command palette from v1, kept at a smaller scope.
 | F10 | Intent Router with 5 tools | P1 |
 | F11 | Benchmark command: Jev vs. LLM guard on the evaluation set | P1 |
 | F12 | Configurable thresholds | P2 |
+| F13 | Guard Console allow/deny list: per-tool and per-dangerous-category toggles, persisted to `~/.jev/tool-policy.json`, dangerous categories off by default (Section 8.1) | P0 |
 
 ## 12. Non-functional requirements
 

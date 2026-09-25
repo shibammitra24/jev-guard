@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { evaluateCommandPrompt } from '../src/workflow.js';
 import { BrowserSession, type CdpTransport } from 'jev-fast-browser';
 import { startGuardServer } from 'jev-guard-cli/server';
@@ -53,14 +56,20 @@ describe('Phase 7 — End-to-End Integration Suite', () => {
   const wsA = 'C:\\workspace\\project-a';
   const wsB = 'C:\\workspace\\project-b';
 
+  // Isolated home: the real ~/.jev/tool-policy.json may have categories toggled on.
+  // Neither command below reaches Jev; the dummy key only lets the guard get past its key check.
+  const home = mkdtempSync(join(tmpdir(), 'jev-home-'));
+  mkdirSync(join(home, '.jev'));
+  writeFileSync(join(home, '.jev', 'credentials'), 'TYPESAFE_API_KEY=test-only\n');
+
   it('safe command is evaluated through the normal guard → allow', async () => {
-    const result = await evaluateCommandPrompt('git status', wsA);
+    const result = await evaluateCommandPrompt('git status', wsA, home);
     expect(result.route).toBe('command');
     expect(result.decision).toBe('allow');
   });
 
   it('dangerous command returns deny/ask and is not executed', async () => {
-    const result = await evaluateCommandPrompt('rm -rf src', wsA);
+    const result = await evaluateCommandPrompt('rm -rf src', wsA, home);
     expect(result.route).toBe('command');
     expect(result.decision).toBe('deny');
   });
@@ -176,7 +185,8 @@ describe('Phase 7 — End-to-End Integration Suite', () => {
     );
 
     expect(hostResult.verdict).toBe('deny');
-    expect(hostResult.reason).toContain('[browser-sidecar] Successfully performed task');
+    expect(hostResult.source).toBe('browser');
+    expect(hostResult.reason).toBe('Successfully performed task');
   });
 
   it('workspace A cannot use workspace B browser session or token', async () => {

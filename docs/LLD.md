@@ -7,7 +7,7 @@
 | Owner | Shibam Mitra |
 | Companion docs | `PRD.md`, `HLD.md` |
 | Stack | TypeScript (Node ≥ 20), esbuild, vitest |
-| Last updated | 21 Sep 2026 |
+| Last updated | 25 Sep 2026 |
 
 ---
 
@@ -26,11 +26,13 @@ jev-guard/
 │   │   │   ├── config.ts           # ~/.jev/config.json
 │   │   │   ├── redact.ts           # secret redaction for logs
 │   │   │   ├── log.ts              # JSONL append + tail
+│   │   │   ├── toolPolicy.ts       # allow/deny list catalog + matching (pure)
 │   │   │   └── types.ts
 │   │   └── test/
 │   ├── guard/                      # jev-guard CLI
 │   │   ├── src/
 │   │   │   ├── main.ts             # stdin → verdict → stdout
+│   │   │   ├── toolPolicyStore.ts  # ~/.jev/tool-policy.json load/save
 │   │   │   └── adapters/
 │   │   │       ├── index.ts
 │   │   │       ├── agy.ts
@@ -248,6 +250,42 @@ Agent mapping happens in the adapter, not here. Antigravity natively supports `a
 
 Fallback verdicts (`source: 'fallback'`) are produced by `fallbackDecision(agent, cause)` and are internal `ask` decisions, but the Antigravity adapter renders them as `deny` so a hook outage cannot fail open.
 
+### 6.1 Allow/deny list (`core/src/toolPolicy.ts`, `guard/src/toolPolicyStore.ts`)
+
+The Guard Console's allow/deny list is a catalog of togglable rules, each keyed by a stable `id`:
+
+```ts
+export interface ToolPolicyRule {
+  id: string;
+  label: string;
+  description: string;
+  kind: 'tool' | 'operation';
+  match: readonly string[];   // tool names, or an OperationClass value
+  defaultEnabled: boolean;
+}
+export type ToolPolicyState = Record<string, boolean>; // ruleId -> enabled
+```
+
+`TOOL_POLICY_CATALOG` (in `core/src/toolPolicy.ts`, pure, no I/O) has ten entries:
+
+- Five **`kind: 'tool'`** rules — one each for the read tools, the write tools, `run_command`/`Bash`, `read_url_content`/`WebFetch`, and `browser_subagent` — all `defaultEnabled: true`.
+- Five **`kind: 'operation'`** rules — one for each of `operation.ts`'s dangerous `OperationClass` values (`destructive`, `exfiltration`, `secret_access`, `outside_workspace`, `guard_tampering`) — all `defaultEnabled: false`.
+
+`resolveToolRule(tool, state)` and `resolveOperationRule(operationClass, state)` look up the matching rule and return `{ rule, enabled }`, falling back to `rule.defaultEnabled` when the state has no explicit entry (so a newly added catalog rule is never silently mis-defaulted by an old saved file). `mergeToolPolicyState(saved)` layers a saved, possibly partial or stale, state onto the current defaults — the same merge pattern `config.ts` already uses for thresholds.
+
+Persistence (`guard/src/toolPolicyStore.ts`, I/O, mirrors `config.ts`): `loadToolPolicy(homeDir)` reads `~/.jev/tool-policy.json`, missing/corrupt → catalog defaults (corrupt file renamed to `.bad`, same as `config.json`). `saveToolPolicy(state, homeDir)` writes atomically (temp file + rename).
+
+**Enforcement, in `guard/src/main.ts`'s `runGuard()`, in this order:**
+
+1. **Tool gate** — `resolveToolRule(call.tool, toolPolicy)`. If matched and disabled, `runGuard` returns `deny` immediately (`source: 'policy'`), before either the browser bridge or the normal Jev path. This is a hard per-tool kill switch: a disabled tool is denied no matter what it's being asked to do, and no matter how its operation-class toggle is set.
+2. **Operation gate** — inside `deterministicDecision()`, after the tool gate has passed. `resolveOperationRule(operation.operationClass, toolPolicy)`:
+   - No match (operation class isn't one of the five dangerous ones) → existing behaviour (routine-workspace-edit allow, or fall through to prefilter/Jev).
+   - Matched and disabled (the default) → `deny` for `destructive`/`exfiltration`/`outside_workspace`/`guard_tampering`, `ask` for `secret_access` — the same verdicts the guard has always produced for these classes, just now sourced from the catalog instead of being hardcoded, and reported with `source: 'policy'`.
+   - Matched and enabled (the user toggled it on) → `allow` with `source: 'policy'`, without calling Jev. The toggle is the user's explicit permission for that category. (It previously fell through to Jev, which re-denied the same calls on risk, so turning the toggle on had no visible effect.)
+3. `config.enabled === false` (the guard's existing global on/off switch) still short-circuits everything above to `allow` — the allow/deny list only applies while the guard itself is enabled.
+
+`RunDeps.toolPolicy` lets callers inject a state (used by every guard test, so none of them depend on the real `~/.jev/tool-policy.json`); `runGuard` defaults to `loadToolPolicy(deps.homeDir)` when not provided.
+
 ## 7. Credentials and config
 
 ### 7.1 `credentials.ts`
@@ -400,6 +438,13 @@ For `agy`, install only at the user-selected `<workspace>/.agents/hooks.json`. N
 - Header: counters (guarded, allowed, asked, denied) and p50/p95 latency computed over the loaded window.
 - An empty state explains how to install the guard.
 
+**Allow/deny list panel (`console.ts`):** renders one row per `TOOL_POLICY_CATALOG` entry — label, description, a kind badge (`TOOL` / `DANGEROUS CATEGORY`), an ALLOWED/BLOCKED badge, and a checkbox styled as a switch (`data-rule="<ruleId>"`, checked = enabled). The catalog itself is embedded once into the webview's `<script>` as `POLICY_CATALOG` so the client can re-render rows locally on every 1 s poll tick without a round trip. Flow:
+
+- Toggling a switch fires a `change` event (delegated on `#policyList`) → `vscode.postMessage({ type: 'toggleTool', ruleId, enabled })`, and the checkbox disables itself pending the round trip.
+- `extension.ts`'s `onDidReceiveMessage` handles `toggleTool`: `loadToolPolicy()` → set `state[ruleId] = enabled` → `saveToolPolicy(state)` (both from `jev-guard-cli/tool-policy`) → `refresh()`.
+- `refresh()` now also loads `loadToolPolicy()` and includes it as `toolPolicy` in the postMessage payload sent on every poll tick and after every button action; the client re-renders `#policyList` whenever `data.toolPolicy` is present.
+- The guard CLI reads the same `~/.jev/tool-policy.json` on its next invocation (`loadToolPolicy()` in `main.ts`), so a toggle takes effect on the very next tool call — no reload of the extension or the hook.
+
 ### 10.4 Router
 
 `registry.ts`:
@@ -447,8 +492,10 @@ Flow in `jev.runCommand`: input box → context → `ask(state, ROUTER_QUESTIONS
 | `core/test/policy.test.ts` | Threshold boundaries (0.849/0.85), score boundaries, trigger selection, reason text |
 | `core/test/prefilter.test.ts` | Read-only allow, `.env` in args blocks the shortcut, shell tools never pre-filtered |
 | `core/test/redact.test.ts` | Key patterns, entropy rule, nested objects, no mutation of the input |
+| `core/test/toolPolicy.test.ts` | Catalog invariants (unique ids, tools default on, dangerous categories default off), `mergeToolPolicyState`, tool/operation rule resolution |
+| `guard/test/toolPolicyStore.test.ts` | Defaults when missing, merge on load, corrupt file renamed to `.bad`, save/load round trip |
 | `guard/test/adapters.test.ts` | Golden payloads (`fixtures/agy-*.json`, `fixtures/claude-*.json`) → expected stdout, byte for byte |
-| `guard/test/main.test.ts` | Malformed stdin, missing key, simulated timeout — all exit 0 with a safe verdict |
+| `guard/test/main.test.ts` | Malformed stdin, missing key, simulated timeout — all exit 0 with a safe verdict; allow/deny list: tool-off denies before Jev, dangerous-category-on allows without Jev, tool-off wins over category-on |
 | `extension/test/installer.test.ts` | Merge into an empty file, a file with existing hooks, double install (idempotent), uninstall restores |
 | `eval/run.ts` | Runs all cases, prints misses, false-positive rate, latency percentiles, calibration buckets, and a Markdown table for the pitch |
 

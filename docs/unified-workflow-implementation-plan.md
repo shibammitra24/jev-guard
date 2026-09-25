@@ -26,7 +26,7 @@ User prompt
            -> return result to agent host
 ```
 
-The extension prompt box remains a demo harness, but the production integration must be driven by the host's browser tool call—not by independently guessing user intent in the extension.
+The production integration is driven by the host's browser tool call: users type browser tasks into Antigravity's own chat. The Guard Console prompt box remains as a secondary entry point that uses the same automatic browser launch. See `docs/host-behaviour.md` → "Primary entry point".
 
 ## Scope
 
@@ -196,7 +196,7 @@ No global Antigravity hook may be installed. Installation remains limited to:
 
 ## Phase 6 — Console and observability
 
-The Guard Console should show a single chronological workflow stream with:
+The Guard Console should show a single chronological "Console Logs" table with:
 
 - prompt received;
 - route selected: `command` or `browser`;

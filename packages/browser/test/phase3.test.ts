@@ -243,13 +243,29 @@ describe('parseBrowserDecision', () => {
   });
 
   // Requirement 5 — low confidence → ask or deny, never implicit allow
-  it(`req 5 — confidence below DENY threshold (${CONFIDENCE_DENY_THRESHOLD}) → deny`, () => {
+  it(`req 5 — confidence below DENY threshold (${CONFIDENCE_DENY_THRESHOLD}) on a low-risk step → ask, never allow`, () => {
     const answers = makeAnswers('CLICK', 'e1');
     (answers.answers.click_target as { confidence: number }).confidence = CONFIDENCE_DENY_THRESHOLD - 0.01;
     (answers.answers.operation as { confidence: number }).confidence = CONFIDENCE_DENY_THRESHOLD - 0.01;
     const result = parseBrowserDecision(snapshot, answers);
+    expect(result.guardDecision.verdict).toBe('ask');
+    expect(result.guardDecision.reason).toMatch(/confidence too low/i);
+  });
+
+  it(`req 5 — confidence below DENY threshold on a risky step → deny`, () => {
+    const answers = makeAnswers('CLICK', 'e1', {
+      risk: { type: 'score', score: 2.0, confidence: 0.9, legend: {}, probabilities: {} },
+    });
+    (answers.answers.click_target as { confidence: number }).confidence = CONFIDENCE_DENY_THRESHOLD - 0.01;
+    const result = parseBrowserDecision(snapshot, answers);
     expect(result.guardDecision.verdict).toBe('deny');
     expect(result.guardDecision.reason).toMatch(/confidence too low/i);
+  });
+
+  it('req 5 — WAIT/SCROLL are code-owned and not confidence-gated', () => {
+    const answers = makeAnswers('WAIT', undefined);
+    (answers.answers.operation as { confidence: number }).confidence = 0.1;
+    expect(parseBrowserDecision(snapshot, answers).guardDecision.verdict).toBe('allow');
   });
 
   it(`req 5 — confidence between DENY and ASK thresholds → ask (not allow)`, () => {

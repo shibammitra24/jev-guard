@@ -3,16 +3,16 @@
   "answers": {
     "destructive": {
       "type": "noul",
-      "noul": 0.96
+      "noul": 0.97
     },
     "category": {
       "type": "choice",
       "choice": "destructive",
       "confidence": 1,
       "probabilities": {
+        "destructive": 1,
         "readonly": 0,
-        "network": 0,
-        "destructive": 1
+        "network": 0
       }
     },
     "risk": {

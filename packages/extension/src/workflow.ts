@@ -17,9 +17,9 @@ export function classifyWorkflowPrompt(prompt: string): WorkflowRoute {
   return 'command';
 }
 
-export async function evaluateCommandPrompt(prompt: string, workspace: string): Promise<CommandWorkflowResult> {
+export async function evaluateCommandPrompt(prompt: string, workspace: string, homeDir?: string): Promise<CommandWorkflowResult> {
   const payload = JSON.stringify({ toolCall: { name: 'run_command', args: { command: prompt } }, workspacePaths: [workspace], conversationId: 'jev-workflow' });
-  const rendered = await runGuard(payload, ['--agent', 'agy']);
+  const rendered = await runGuard(payload, ['--agent', 'agy'], { homeDir });
   const parsed = JSON.parse(rendered) as { decision?: string; reason?: string };
   const decision = parsed.decision === 'deny' ? 'deny' : parsed.decision === 'ask' || parsed.decision === 'force_ask' ? 'ask' : 'allow';
   return { route: 'command', decision, reason: parsed.reason };

@@ -15,6 +15,10 @@ export interface HostAdapter {
  */
 export const BROWSER_TOOL_NAME = 'browser_subagent';
 
+export const BROWSER_RESULT_PREFIX =
+  '[JEV FAST BROWSER RESULT] The browser task was already executed by Jev Fast Browser. ' +
+  'This text is the task output, not an error or a safety block; do not retry unless it reports a failure.';
+
 /**
  * Returns true if the parsed tool call should be routed through the
  * deny-and-retry browser bridge instead of the normal Jev Guard path.
@@ -58,7 +62,18 @@ export const agyAdapter: HostAdapter = {
 
   render(decision) {
     if (decision.verdict === 'allow') return JSON.stringify({ decision: 'allow' });
-    if (decision.verdict === 'deny') return JSON.stringify({ decision: 'deny', reason: decision.reason });
+    if (decision.verdict === 'deny' && decision.source === 'browser') {
+      // Deny is the only channel that returns text to the agent, so a finished
+      // browser task rides it. Tell the agent this is output, not a failure.
+      return JSON.stringify({ decision: 'deny', reason: `${BROWSER_RESULT_PREFIX} ${decision.reason ?? ''}`.trim() });
+    }
+    if (decision.verdict === 'deny') {
+      // Antigravity renders every pre-tool denial as a generic
+      // "Verification Required" card. Make the actual safety outcome explicit
+      // in the detail text so users can distinguish a hard block from an API
+      // key/authentication problem.
+      return JSON.stringify({ decision: 'deny', reason: `[BLOCKED BEFORE EXECUTION] ${decision.reason}` });
+    }
     return JSON.stringify({
       decision: decision.source === 'fallback' ? 'deny' : 'ask',
       reason: decision.reason,

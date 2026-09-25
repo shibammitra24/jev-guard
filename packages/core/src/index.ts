@@ -8,3 +8,4 @@ export * from './prefilter';
 export * from './operation';
 export * from './redact';
 export * from './client';
+export * from './toolPolicy';

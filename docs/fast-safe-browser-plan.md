@@ -142,7 +142,7 @@ The Antigravity hook CLI remains available for normal tool calls; the daemon is 
 
 Add these workspace-scoped commands:
 
-- `Jev: Start Fast Browser` — prompts for the workspace and starts the sidecar.
+- No manual start command: the sidecar activates with the workspace, and Chrome/Edge launches when Antigravity calls `browser_subagent` (or from the Guard Console prompt box). The URL comes from the task text.
 - `Jev: Stop Fast Browser`.
 - `Jev: Open Fast Browser Console`.
 - `Jev: Clear Logs`.
@@ -233,7 +233,7 @@ Do not claim a percentage until at least five matched runs per task. Present the
 ## Demo script
 
 1. Select a disposable workspace and install the workspace guard.
-2. Start Fast Browser.
+2. Give a browser task with a URL in Antigravity's chat (the browser starts automatically).
 3. Open a documentation page and show a structured action table without screenshots on every step.
 4. Execute a normal search; show low Jev request count and p50 latency.
 5. Trigger an external navigation or form submission; show the browser action paused by Jev.

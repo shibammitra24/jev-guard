@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { defaultToolPolicyState, mergeToolPolicyState, TOOL_POLICY_CATALOG } from 'jev-core';
 import { renderConsoleHtml, summarize, type DecisionRecord, type BrowserViewStatus } from '../src/console.js';
 
 describe('Phase 6 — Console and Observability', () => {
@@ -115,8 +116,11 @@ describe('Phase 6 — Console and Observability', () => {
       failedGoals: 0,
     });
 
-    // Workflow stream headers and cards
-    expect(html).toContain('Workflow Stream');
+    // Console log headers and cards
+    expect(html).toContain('Console Logs');
+    expect(html).not.toContain('Workflow Stream');
+    expect(html).toContain('id="prompt"');
+    expect(html).not.toContain('id="start"');
     expect(html).toContain('Total Events');
     expect(html).toContain('Jev Requests');
     expect(html).toContain('CDP Calls');
@@ -146,6 +150,33 @@ describe('Phase 6 — Console and Observability', () => {
 
   it('renders empty placeholder row when no events are logged', () => {
     const html = renderConsoleHtml([], { running: false, protocolCalls: 0, screenshots: 0 });
-    expect(html).toContain('No workflow events yet');
+    expect(html).toContain('No console logs yet');
+  });
+
+  it('renders the allow/deny list with every catalog rule and its default state', () => {
+    const html = renderConsoleHtml([], { running: false, protocolCalls: 0, screenshots: 0 }, defaultToolPolicyState());
+    expect(html).toContain('Allow / Deny List');
+    for (const rule of TOOL_POLICY_CATALOG) {
+      expect(html).toContain(rule.label);
+      expect(html).toContain(`data-rule="${rule.id}"`);
+    }
+    // Tool rules default on (checked, ALLOWED); dangerous-category rules default off (unchecked, BLOCKED).
+    expect(html).toMatch(/data-rule="tool_run_command"\s+checked/);
+    expect(html).not.toMatch(/data-rule="op_destructive"\s+checked/);
+    expect(html).toContain('BLOCKED');
+    expect(html).toContain('ALLOWED');
+  });
+
+  it('reflects a toggled state passed in from the saved policy', () => {
+    const state = mergeToolPolicyState({ op_destructive: true, tool_run_command: false });
+    const html = renderConsoleHtml([], { running: false, protocolCalls: 0, screenshots: 0 }, state);
+    expect(html).toMatch(/data-rule="op_destructive"\s+checked/);
+    expect(html).not.toMatch(/data-rule="tool_run_command"\s+checked/);
+  });
+
+  it('falls back to catalog defaults when no policy state is passed', () => {
+    const html = renderConsoleHtml([], { running: false, protocolCalls: 0, screenshots: 0 });
+    expect(html).toMatch(/data-rule="tool_run_command"\s+checked/);
+    expect(html).not.toMatch(/data-rule="op_destructive"\s+checked/);
   });
 });

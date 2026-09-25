@@ -6,16 +6,14 @@
   "icon": "assets/jev.svg",
   "private": true,
   "main": "src/extension.ts",
-  "activationEvents": ["onStartupFinished", "onView:jev.console", "onCommand:jev.openConsole", "onCommand:jev.installGuard", "onCommand:jev.testGuard", "onCommand:jev.setApiKey", "onCommand:jev.startFastBrowser", "onCommand:jev.stopFastBrowser", "onCommand:jev.runFastBrowserGoal", "onCommand:jev.runWorkflow"],
+  "activationEvents": ["onStartupFinished", "onView:jev.console", "onCommand:jev.openConsole", "onCommand:jev.installGuard", "onCommand:jev.testGuard", "onCommand:jev.setApiKey", "onCommand:jev.stopFastBrowser", "onCommand:jev.runWorkflow"],
   "contributes": { "commands": [
     { "command": "jev.setApiKey", "title": "Jev: Set API Key" },
     { "command": "jev.installGuard", "title": "Jev: Install Antigravity Guard" },
     { "command": "jev.uninstallGuard", "title": "Jev: Uninstall Antigravity Guard" },
     { "command": "jev.testGuard", "title": "Jev: Test Guard" },
     { "command": "jev.openConsole", "title": "Jev: Open Guard Console" }
-    ,{ "command": "jev.startFastBrowser", "title": "Jev: Start Fast Browser" }
     ,{ "command": "jev.stopFastBrowser", "title": "Jev: Stop Fast Browser" }
-    ,{ "command": "jev.runFastBrowserGoal", "title": "Jev: Run Fast Browser Goal" }
     ,{ "command": "jev.runWorkflow", "title": "Jev: Run Protected Workflow" }
     ,{ "command": "jev.runCommand", "title": "Jev: Run Command" }
   ], "viewsContainers": { "activitybar": [{ "id": "jev", "title": "Jev Guard", "icon": "assets/jev.svg" }] }, "views": { "jev": [{ "id": "jev.console", "name": "Guard Console", "type": "webview" }] } },

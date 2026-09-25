@@ -163,14 +163,23 @@ export function parseBrowserDecision(
   // Requirement 4: apply policy thresholds to guard signals
   let guardDecision: PolicyDecision = decide(signals, 'agy', thresholds);
 
-  // Requirement 5: low action-choice confidence → escalate to ask or deny
-  // Only applies to non-terminal choices (DONE/BLOCKED have no execution risk)
-  if (choice.operation !== 'DONE' && choice.operation !== 'BLOCKED') {
+  // Requirement 5: low action-choice confidence → escalate to ask or deny.
+  // Terminal choices and code-owned scroll/wait carry no execution risk.
+  // Confidence measures which target was picked, not how risky it is (with
+  // dozens of candidates a clear pick can still score ~0.3), so on a step Jev
+  // judged safe it escalates to ask; only a step that is already risky is denied.
+  const isControl = CONTROL_OPERATIONS.includes(choice.operation.toLowerCase() as typeof CONTROL_OPERATIONS[number]);
+  if (choice.operation !== 'DONE' && choice.operation !== 'BLOCKED' && !isControl) {
     if (choice.confidence < CONFIDENCE_DENY_THRESHOLD) {
-      guardDecision = {
-        verdict: 'deny',
-        reason: `Jev Guard: action-choice confidence too low (${choice.confidence.toFixed(2)} < ${CONFIDENCE_DENY_THRESHOLD}) — blocked to prevent unintended execution.`,
-      };
+      guardDecision = guardDecision.verdict === 'allow'
+        ? {
+            verdict: 'ask',
+            reason: `Jev Guard: action-choice confidence too low (${choice.confidence.toFixed(2)} < ${CONFIDENCE_DENY_THRESHOLD}) on a low-risk step — confirm before executing.`,
+          }
+        : {
+            verdict: 'deny',
+            reason: `Jev Guard: action-choice confidence too low (${choice.confidence.toFixed(2)} < ${CONFIDENCE_DENY_THRESHOLD}) on a risky step — blocked to prevent unintended execution.`,
+          };
     } else if (choice.confidence < CONFIDENCE_ASK_THRESHOLD && guardDecision.verdict === 'allow') {
       // Confidence is uncertain — escalate allow → ask
       guardDecision = {

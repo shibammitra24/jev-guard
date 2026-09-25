@@ -1,8 +1,9 @@
 import { ask, type JevAnswers } from 'jev-core';
 import { buildBrowserQuestions, buildBrowserState, compatibleActions } from './action-space.js';
 import { parseBrowserDecision, type BrowserDecision } from './decision.js';
-import type { GuardEndpoint } from './session.js';
-import { BrowserSession } from './session.js';
+import type { ExecutionResult, GuardEndpoint } from './session.js';
+import { BrowserSession, BrowserSessionError } from './session.js';
+import { StalePageError } from './freshness.js';
 export { BrowserSession } from './session.js';
 import type { BrowserSnapshot, ObservedAction } from './types.js';
 
@@ -47,6 +48,13 @@ export function createJevBrowserDecider(apiKey: string, timeoutMs = 3000): Brows
   };
 }
 
+const MAX_STALE_RETRIES = 3;
+
+function isRetryablePageChange(error: unknown): boolean {
+  if (error instanceof StalePageError) return true;
+  return error instanceof BrowserSessionError && /target changed or is covered/i.test(error.message);
+}
+
 function selectedAction(snapshot: BrowserSnapshot, decision: BrowserDecision): ObservedAction | undefined {
   const { choice } = decision;
   if (choice.target) return snapshot.actions.find(action => action.id === choice.target);
@@ -72,6 +80,7 @@ export async function runBrowserGoal(
   const history: string[] = [];
   let snapshot = await session.observe();
   const maxSteps = Math.max(1, Math.min(options.maxSteps ?? 20, 50));
+  let staleRetries = 0;
 
   for (let step = 0; step < maxSteps; step += 1) {
     const decision = await options.decide(snapshot, goal, history);
@@ -131,14 +140,27 @@ export async function runBrowserGoal(
     }
 
     // session.execute() applies a second freshness check + guard daemon call
-    const result = await session.execute(action, snapshot, guard, {
-      // Guard already asked above; pass confirmed=true so execute doesn't ask again
-      confirmed: guardDecision.verdict === 'ask',
-      confirm: options.confirm
-        ? (execDecision, selected) =>
-            options.confirm!(execDecision.reason ?? 'Jev Guard: confirm this browser action.', selected, decision)
-        : undefined,
-    });
+    let result: ExecutionResult;
+    try {
+      result = await session.execute(action, snapshot, guard, {
+        // Guard already asked above; pass confirmed=true so execute doesn't ask again
+        confirmed: guardDecision.verdict === 'ask',
+        confirm: options.confirm
+          ? (execDecision, selected) =>
+              options.confirm!(execDecision.reason ?? 'Jev Guard: confirm this browser action.', selected, decision)
+          : undefined,
+      });
+    } catch (error) {
+      // Live pages (tickers, carousels, overlays) change under a decision. The
+      // stale decision is discarded before any mutation; decide again on fresh state.
+      if (!isRetryablePageChange(error) || staleRetries >= MAX_STALE_RETRIES) throw error;
+      staleRetries += 1;
+      history.push(`${choice.operation}:${action.id}:stale`);
+      await new Promise(resolve => setTimeout(resolve, 150 * staleRetries));
+      snapshot = await session.observe();
+      continue;
+    }
+    staleRetries = 0;
 
     history.push(`${choice.operation}:${action.id}:${result.decision.decision}`);
 

@@ -40,7 +40,8 @@ export const SNAPSHOT_SCRIPT = String.raw`(() => {
     }
   }
   const text = document.body.innerText.slice(0, 6000), semantic = actions.map(({ node, kind, label, role, value, currentValue, optionValue }) => [node, kind, label, role, value, currentValue, optionValue]);
-  const fingerprint = JSON.stringify([performance.timeOrigin, location.href, document.title, scrollX, scrollY, text, semantic]);
+  // Controls, not free text: live counters and tickers must not invalidate a decision whose target is unchanged.
+  const fingerprint = JSON.stringify([performance.timeOrigin, location.href, document.title, scrollX, scrollY, semantic]);
   actions.splice(250); actions.forEach((action, index) => action.id = 'e' + (index + 1));
   if (scrollY + innerHeight < document.documentElement.scrollHeight - 2) actions.push({ id: 'scroll_down', kind: 'scroll', label: 'Scroll down' });
   if (scrollY > 0) actions.push({ id: 'scroll_up', kind: 'scroll', label: 'Scroll up' });

@@ -11,13 +11,14 @@ import { routeCommand } from './router/router.js';
 import { setApiKey } from './secrets.js';
 import { testGuard } from './testGuard.js';
 import { classifyWorkflowPrompt, evaluateCommandPrompt, extractPromptUrl } from './workflow.js';
+import { loadToolPolicy, saveToolPolicy } from 'jev-guard-cli/tool-policy';
 
 type Disposable = { dispose(): void };
-type WebviewMessage = { type?: string; prompt?: string };
+type WebviewMessage = { type?: string; prompt?: string; ruleId?: string; enabled?: boolean };
 type Webview = { html: string; options?: { enableScripts?: boolean }; postMessage(message: unknown): Promise<boolean>; onDidReceiveMessage(listener: (message: WebviewMessage) => void): Disposable };
 export interface ExtensionContextLike { subscriptions?: { push(value: unknown): void }; secrets?: { store(key: string, value: string): Promise<void>; get?(key: string): Promise<string | undefined> }; asAbsolutePath?: (path: string) => string; }
 
-const fastBrowser = new FastBrowserController();
+const fastBrowser = new FastBrowserController(appendConsoleRecord);
 const decisionLogPath = join(homedir(), '.jev', 'decisions.jsonl');
 
 /** Truncate the shared audit log on Windows and other supported hosts. */
@@ -68,15 +69,9 @@ export function activate(context?: ExtensionContextLike): void {
     });
   };
 
-  const startBrowser = async (workspaceDir?: string, suggestedUrl?: string) => {
-    const workspace = workspaceDir ?? await chooseWorkspace();
-    if (!workspace) return;
-    const endpoint = await vscode.window?.showInputBox?.({ prompt: 'Chrome/Edge remote debugging endpoint', value: 'http://127.0.0.1:9222' });
-    if (!endpoint) return;
-    const initialUrl = suggestedUrl ?? await vscode.window?.showInputBox?.({ prompt: 'Initial page URL', value: 'https://example.com' });
-    if (!initialUrl) return;
+  const launchBrowser = async (workspace: string, prompt: string) => {
     try {
-      const status = await fastBrowser.start(workspace, endpoint, initialUrl);
+      const status = await fastBrowser.launch(workspace, prompt);
       appendConsoleRecord({
         agent: 'browser',
         route: 'browser',
@@ -101,7 +96,7 @@ export function activate(context?: ExtensionContextLike): void {
         reason: message,
         source: 'pipeline',
       });
-      vscode.window?.showErrorMessage?.(`Could not start Jev Fast Browser: ${message}. Start visible Chrome with --remote-debugging-port=9222 and retry.`);
+      vscode.window?.showErrorMessage?.(`Could not start Jev Fast Browser: ${message}`);
       return undefined;
     }
   };
@@ -194,8 +189,12 @@ export function activate(context?: ExtensionContextLike): void {
         vscode.window?.showInformationMessage?.(`Jev command decision: ${result.decision}${result.reason ? ` — ${result.reason}` : ''}`);
         return result;
       }
-      if (!fastBrowser.status().running) {
-        const started = await startBrowser(workspaceDir, extractPromptUrl(prompt));
+      if (!(await context.secrets?.get?.('typesafeApiKey'))) {
+        vscode.window?.showErrorMessage?.('Set the Typesafe API key with Jev: Set API Key first.');
+        return;
+      }
+      if (!fastBrowser.status().running || extractPromptUrl(prompt)) {
+        const started = await launchBrowser(workspaceDir, prompt);
         if (!started) return;
       } else {
         const current = fastBrowser.status();
@@ -243,16 +242,14 @@ export function activate(context?: ExtensionContextLike): void {
     return result;
   });
   register('jev.testGuard', () => testGuard(context.asAbsolutePath?.('guard.js') ?? 'guard.js'));
-  register('jev.startFastBrowser', () => startBrowser());
   register('jev.stopFastBrowser', async () => { const status = await fastBrowser.stop(); vscode.window?.showInformationMessage?.('Jev Fast Browser stopped'); return status; });
-  register('jev.runFastBrowserGoal', async () => { if (!fastBrowser.status().running) { vscode.window?.showErrorMessage?.('Start Jev Fast Browser first.'); return; } const goal = await vscode.window?.showInputBox?.({ prompt: 'What should the fast browser do?' }); if (goal) return runBrowserGoal(goal); });
   register('jev.runWorkflow', runWorkflow);
 
   const provider = { resolveWebviewView(view: { webview: Webview }) {
     view.webview.options = { enableScripts: true };
     const read = (): DecisionRecord[] => existsSync(decisionLogPath) ? readFileSync(decisionLogPath, 'utf8').split(/\r?\n/).filter(Boolean).flatMap(line => { try { return [JSON.parse(line) as DecisionRecord]; } catch { return []; } }).slice(-200) : [];
-    const refresh = () => { const records = read(); void view.webview.postMessage({ records: records.slice().reverse(), summary: summarize(records), browser: fastBrowser.status() }); };
-    view.webview.html = renderConsoleHtml(read(), fastBrowser.status());
+    const refresh = () => { const records = read(); void view.webview.postMessage({ records: records.slice().reverse(), summary: summarize(records), browser: fastBrowser.status(), toolPolicy: loadToolPolicy() }); };
+    view.webview.html = renderConsoleHtml(read(), fastBrowser.status(), loadToolPolicy());
     const messages = view.webview.onDidReceiveMessage(message => {
       if (message.type === 'clearLogs') {
         try {
@@ -263,9 +260,17 @@ export function activate(context?: ExtensionContextLike): void {
           vscode.window?.showErrorMessage?.(`Jev Guard could not clear logs: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      if (message.type === 'startBrowser') void vscode.commands?.executeCommand?.('jev.startFastBrowser').finally(refresh);
+      if (message.type === 'toggleTool' && typeof message.ruleId === 'string' && typeof message.enabled === 'boolean') {
+        try {
+          const state = loadToolPolicy();
+          state[message.ruleId] = message.enabled;
+          saveToolPolicy(state);
+        } catch (error) {
+          vscode.window?.showErrorMessage?.(`Jev Guard could not save the allow/deny list: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        refresh();
+      }
       if (message.type === 'stopBrowser') void vscode.commands?.executeCommand?.('jev.stopFastBrowser').finally(refresh);
-      if (message.type === 'runBrowser') void vscode.commands?.executeCommand?.('jev.runFastBrowserGoal').finally(refresh);
       if (message.type === 'runWorkflow') void vscode.commands?.executeCommand?.('jev.runWorkflow', message.prompt).finally(refresh);
     });
     const timer = setInterval(refresh, 1000);

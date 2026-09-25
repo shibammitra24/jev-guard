@@ -1,7 +1,8 @@
-import { CORE_VERSION, GUARD_QUESTIONS, assessOperation, buildGuardState, decide, isRoutineWorkspaceOperation, prefilter, isWildcardDelete, redact, type GuardDecision, type JevAnswers, type NormalizedToolCall, type OperationAssessment } from 'jev-core';
+import { CORE_VERSION, GUARD_QUESTIONS, assessOperation, buildGuardState, decide, isRoutineWorkspaceOperation, prefilter, isWildcardDelete, redact, resolveOperationRule, resolveToolRule, type GuardDecision, type JevAnswers, type NormalizedToolCall, type OperationAssessment, type ToolPolicyState } from 'jev-core';
 import { loadApiKey } from './credentials';
 import { loadConfig, type GuardConfig } from './config';
 import { createLogger, type DecisionLogger } from './log';
+import { loadToolPolicy } from './toolPolicyStore';
 import { agyAdapter, isBrowserTool } from './adapters/agy';
 import { runBrowserBridge, waitForBrowserBridge, type BrowserBridgeEndpoint } from './adapters/browser-bridge';
 
@@ -10,6 +11,8 @@ const WATCHDOG_MS = 4000;
 
 export interface RunDeps {
   config?: GuardConfig;
+  /** Guard Console allow/deny toggles. Defaults to loadToolPolicy(homeDir). */
+  toolPolicy?: ToolPolicyState;
   logger?: DecisionLogger;
   apiKey?: string;
   ask?: typeof import('jev-core')['ask'];
@@ -75,16 +78,37 @@ function record(call: NormalizedToolCall | undefined, decision: GuardDecision): 
     insideWorkspace: operation.insideWorkspace,
     reversibleEdit: operation.reversibleEdit,
     ...decision,
+    // The console reads `decision` before `verdict`; a browser hand-off is not a block.
+    // Only the status line is logged; the page excerpt that follows it is for the agent.
+    ...(decision.source === 'browser' ? { route: 'browser', stage: 'browser_handoff', decision: 'handoff', reason: decision.reason?.split('\n')[0] } : {}),
   };
 }
 
-function deterministicDecision(operation: OperationAssessment, now: () => number, started: number): GuardDecision | undefined {
+function deterministicDecision(operation: OperationAssessment, toolPolicy: ToolPolicyState, now: () => number, started: number): GuardDecision | undefined {
   const latencyMs = now() - started;
-  if (operation.operationClass === 'destructive' || operation.operationClass === 'exfiltration' || operation.operationClass === 'outside_workspace' || operation.operationClass === 'guard_tampering') {
-    return { verdict: 'deny', reason: `Jev Guard: ${operation.reason}. This action was blocked.`, latencyMs, source: 'prefilter' };
-  }
-  if (operation.operationClass === 'secret_access') {
-    return { verdict: 'ask', reason: `Jev Guard: ${operation.reason}. Confirm before retrying.`, latencyMs, source: 'prefilter' };
+
+  // Console-editable allow/deny list for the dangerous OperationClass categories.
+  // Off (the default) hard-blocks the category without calling Jev. On is the
+  // user's explicit permission for the category, so it is allowed outright —
+  // handing it to Jev would just re-deny it on risk, making the toggle a no-op.
+  const opGate = resolveOperationRule(operation.operationClass, toolPolicy);
+  if (opGate) {
+    if (opGate.enabled) {
+      return {
+        verdict: 'allow',
+        reason: `Jev Guard: ${operation.reason}. Allowed — "${opGate.rule.label}" is turned on in the Guard Console allow/deny list.`,
+        latencyMs,
+        source: 'policy',
+      };
+    }
+    const verdict = operation.operationClass === 'secret_access' ? 'ask' : 'deny';
+    const action = verdict === 'deny' ? 'This action was blocked' : 'Confirm before retrying';
+    return {
+      verdict,
+      reason: `Jev Guard: ${operation.reason}. ${action} — "${opGate.rule.label}" is turned off in the Guard Console allow/deny list.`,
+      latencyMs,
+      source: 'policy',
+    };
   }
   if (isRoutineWorkspaceOperation(operation)) {
     return { verdict: 'allow', reason: `Jev Guard: ${operation.reason}.`, latencyMs, source: 'prefilter' };
@@ -99,6 +123,7 @@ function deterministicDecision(operation: OperationAssessment, now: () => number
 async function evaluate(
   call: NormalizedToolCall,
   config: GuardConfig,
+  toolPolicy: ToolPolicyState,
   apiKey: string,
   ask: typeof import('jev-core')['ask'],
   now: () => number,
@@ -106,7 +131,7 @@ async function evaluate(
   const started = now();
   if (!config.enabled) return { verdict: 'allow', latencyMs: now() - started, source: 'disabled' };
   const operation = assessOperation(call);
-  const classified = deterministicDecision(operation, now, started);
+  const classified = deterministicDecision(operation, toolPolicy, now, started);
   if (classified) return classified;
   if (prefilter(call, config.prefilterTools) === 'allow') return { verdict: 'allow', latencyMs: now() - started, source: 'prefilter' };
   const answers = await ask(buildGuardState(call), GUARD_QUESTIONS, {
@@ -127,6 +152,7 @@ export async function runGuard(input: string, argv: string[] = ['--agent', 'agy'
   const config = deps.config ?? loadConfig(deps.homeDir);
   const logger = deps.logger ?? createLogger(config.logPath);
   const now = deps.now ?? (() => Date.now());
+  const started = now();
   let call: NormalizedToolCall | undefined;
   let decision: GuardDecision;
 
@@ -134,15 +160,29 @@ export async function runGuard(input: string, argv: string[] = ['--agent', 'agy'
     if (agent !== 'agy') throw new Error('Unsupported agent: ' + agent);
     const payload = JSON.parse(input) as unknown;
     call = agyAdapter.parse(payload);
+    const toolPolicy = deps.toolPolicy ?? loadToolPolicy(deps.homeDir);
+
+    // Guard Console tool-level kill switch. Applies before the browser bridge
+    // and before the normal Jev path — a tool toggled off never runs Jev and
+    // never reaches the bridge, regardless of what it's being asked to do.
+    const toolGate = config.enabled ? resolveToolRule(call.tool, toolPolicy) : undefined;
 
     // -----------------------------------------------------------------------
-    // Branch: browser tool call → deny-and-retry bridge
-    // Branch: normal tool call  → existing Jev Guard path
+    // Branch: tool toggled off      → immediate deny
+    // Branch: browser tool call     → deny-and-retry bridge
+    // Branch: normal tool call      → existing Jev Guard path
     //
     // The bridge path is documented in docs/host-behaviour.md.
     // isBrowserTool() returns true for 'browser_subagent' only.
     // -----------------------------------------------------------------------
-    if (isBrowserTool(call)) {
+    if (toolGate && !toolGate.enabled) {
+      decision = {
+        verdict: 'deny',
+        reason: `Jev Guard: "${toolGate.rule.label}" is turned off in the Guard Console allow/deny list.${toolGate.rule.offHint ? ` ${toolGate.rule.offHint}` : ''}`,
+        latencyMs: now() - started,
+        source: 'policy',
+      };
+    } else if (isBrowserTool(call)) {
       // Bridge path — watchdog still applies
       const bridgeWork = (deps.browserBridge !== undefined
         ? Promise.resolve(deps.browserBridge)
@@ -168,7 +208,7 @@ export async function runGuard(input: string, argv: string[] = ['--agent', 'agy'
       const needsJev = config.enabled && prefilter(call, config.prefilterTools) === 'check';
       const apiKey = needsJev ? (deps.apiKey ?? loadApiKey(process.env, deps.homeDir)) : '';
       const ask = deps.ask ?? (await import('jev-core')).ask;
-      const work = evaluate(call, config, apiKey, ask, now);
+      const work = evaluate(call, config, toolPolicy, apiKey, ask, now);
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<GuardDecision>((resolve) => {
         timer = setTimeout(

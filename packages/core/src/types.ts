@@ -38,7 +38,8 @@ export interface GuardDecision {
   signals?: GuardSignals;
   trigger?: keyof GuardSignals;
   latencyMs: number;
-  source: 'jev' | 'prefilter' | 'fallback' | 'disabled';
+  /** 'browser' marks a deny that carries a completed browser-task result, not a safety block. */
+  source: 'jev' | 'prefilter' | 'fallback' | 'disabled' | 'policy' | 'browser';
 }
 
 export interface DecisionRecord extends Omit<GuardDecision, 'reason'> {

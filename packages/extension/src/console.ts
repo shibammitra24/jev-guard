@@ -1,3 +1,5 @@
+import { TOOL_POLICY_CATALOG, type ToolPolicyRule, type ToolPolicyState } from 'jev-core';
+
 export interface DecisionRecord {
   ts?: string;
   stage?: string;
@@ -84,6 +86,7 @@ function formatStage(stage?: string, tool?: string): string {
       case 'page_stale': return 'Page Stale';
       case 'host_error': return 'Host Error';
       case 'workflow_result': return 'Workflow Result';
+      case 'browser_handoff': return 'Browser Hand-off';
       default: return stage.replace(/_/g, ' ');
     }
   }
@@ -127,17 +130,57 @@ function renderRow(record: DecisionRecord): string {
 
 function browserDescription(browser: BrowserViewStatus): string {
   if (!browser.running) {
-    return 'Browser inactive. A browser prompt can start it automatically.';
+    return 'Browser idle. Ask Antigravity to browse a URL in its chat (or use the prompt above) and it starts automatically.';
   }
   return `${escapeHtml(browser.pageUrl ?? 'loading')} · ${browser.observedActions ?? 0} controls · ${browser.protocolCalls} CDP calls · ${browser.screenshots} screenshots · ${browser.jevRequests ?? 0} planner requests`;
+}
+
+function policyRowEnabled(rule: ToolPolicyRule, state: ToolPolicyState): boolean {
+  return state[rule.id] ?? rule.defaultEnabled;
+}
+
+export const POLICY_GROUPS = [
+  { kind: 'tool', title: 'Agent tools', hint: 'Off: every call to that tool is denied before Jev runs.', badge: 'TOOL', on: 'ALLOWED', off: 'BLOCKED' },
+  { kind: 'browser', title: 'Autonomous browser', hint: 'On: low-risk steps run without asking. Jev still stops anything destructive, secret or exfiltrating.', badge: 'BROWSER', on: 'AUTOMATIC', off: 'NEEDS CONFIRMATION' },
+  { kind: 'operation', title: 'Dangerous categories', hint: 'Blocked by default. On: the agent may do this with no Jev check — only turn on in a workspace you can afford to lose.', badge: 'DANGEROUS', on: 'ALLOWED', off: 'BLOCKED' },
+] as const;
+
+function renderPolicyRow(rule: ToolPolicyRule, state: ToolPolicyState): string {
+  const enabled = policyRowEnabled(rule, state);
+  const group = POLICY_GROUPS.find(g => g.kind === rule.kind) ?? POLICY_GROUPS[0];
+  const kindLabel = group.badge;
+  return `
+    <div class="policy-row">
+      <label class="switch">
+        <input type="checkbox" class="policy-toggle" data-rule="${escapeHtml(rule.id)}" ${enabled ? 'checked' : ''}>
+        <span class="slider"></span>
+      </label>
+      <div class="policy-info">
+        <div class="policy-label">
+          <span class="badge badge-stage">${kindLabel}</span>
+          ${escapeHtml(rule.label)}
+          <span class="badge badge-${enabled ? 'allow' : 'deny'}">${enabled ? group.on : group.off}</span>
+        </div>
+        <div class="policy-desc">${escapeHtml(rule.description)}</div>
+      </div>
+    </div>`;
+}
+
+function renderPolicyList(state: ToolPolicyState): string {
+  return POLICY_GROUPS.map(group =>
+    `<div class="policy-group"><div class="policy-group-title">${group.title}</div><div class="policy-group-hint">${group.hint}</div></div>` +
+    TOOL_POLICY_CATALOG.filter(rule => rule.kind === group.kind).map(rule => renderPolicyRow(rule, state)).join(''),
+  ).join('');
 }
 
 export function renderConsoleHtml(
   records: DecisionRecord[],
   browser: BrowserViewStatus = { running: false, protocolCalls: 0, screenshots: 0 },
+  toolPolicy: ToolPolicyState = {},
 ): string {
   const summary = summarize(records, browser);
   const rows = records.slice(-200).reverse().map(renderRow).join('');
+  const policyRows = renderPolicyList(toolPolicy);
 
   return `<!doctype html>
 <html lang="en">
@@ -320,13 +363,61 @@ export function renderConsoleHtml(
       text-transform: uppercase;
       letter-spacing: 0.3px;
     }
-    .badge-browser { background: rgba(88, 166, 255, 0.15); color: #58a6ff; border: 1px solid rgba(88, 166, 255, 0.3); }
+    .badge-browser, .badge-handoff { background: rgba(88, 166, 255, 0.15); color: #58a6ff; border: 1px solid rgba(88, 166, 255, 0.3); }
     .badge-command { background: rgba(188, 140, 255, 0.15); color: #bc8cff; border: 1px solid rgba(188, 140, 255, 0.3); }
     .badge-stage { background: #21262d; color: #8b949e; border: 1px solid var(--border); text-transform: none; }
     .badge-allow { background: rgba(63, 185, 80, 0.15); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.3); }
     .badge-deny { background: rgba(248, 81, 73, 0.15); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.3); }
     .badge-ask, .badge-force_ask { background: rgba(210, 153, 34, 0.15); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.3); }
     .badge-info { background: #21262d; color: #8b949e; border: 1px solid var(--border); }
+
+    .policy-panel {
+      display: grid;
+      gap: 8px;
+      margin: 14px 0;
+      padding: 12px 14px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .policy-panel-header { display: flex; align-items: baseline; justify-content: space-between; }
+    .policy-panel-hint { font-size: 11px; color: var(--text-muted); }
+    .policy-list { display: grid; gap: 6px; }
+    .policy-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .policy-group { margin-top: 8px; }
+    .policy-group:first-child { margin-top: 0; }
+    .policy-group-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .policy-group-hint { font-size: 11px; color: var(--text-muted); }
+    .policy-info { display: flex; flex-direction: column; gap: 2px; }
+    .policy-label { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .policy-desc { font-size: 11px; color: var(--text-muted); }
+
+    .switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; margin-top: 2px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background-color: var(--deny);
+      border-radius: 20px;
+      transition: background-color 0.15s ease-in-out;
+    }
+    .switch .slider::before {
+      position: absolute; content: "";
+      height: 16px; width: 16px; left: 2px; bottom: 2px;
+      background-color: #fff;
+      border-radius: 50%;
+      transition: transform 0.15s ease-in-out;
+    }
+    .switch input:checked + .slider { background-color: var(--allow); }
+    .switch input:checked + .slider::before { transform: translateX(16px); }
+    .switch input:disabled + .slider { opacity: 0.5; cursor: default; }
   </style>
 </head>
 <body>
@@ -347,10 +438,16 @@ export function renderConsoleHtml(
       <div class="browser-meta" id="browserMeta">${browserDescription(browser)}</div>
     </div>
     <div class="actions">
-      <button class="btn btn-secondary" id="start">Start browser</button>
-      <button class="btn btn-secondary" id="run">Browser goal</button>
       <button class="btn btn-secondary" id="stop">Stop</button>
     </div>
+  </div>
+
+  <div class="policy-panel">
+    <div class="policy-panel-header">
+      <b>Allow / Deny List</b>
+      <span class="policy-panel-hint">Changes apply to the next tool call or browser step.</span>
+    </div>
+    <div class="policy-list" id="policyList">${policyRows}</div>
   </div>
 
   <div class="cards-grid">
@@ -370,7 +467,7 @@ export function renderConsoleHtml(
   </div>
 
   <div class="stream-header">
-    <h3>Workflow Stream</h3>
+    <h3>Console Logs</h3>
   </div>
 
   <div class="table-container">
@@ -385,12 +482,13 @@ export function renderConsoleHtml(
           <th style="text-align: right;">Latency</th>
         </tr>
       </thead>
-      <tbody id="rows">${rows || '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No workflow events yet</td></tr>'}</tbody>
+      <tbody id="rows">${rows || '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No console logs yet</td></tr>'}</tbody>
     </table>
   </div>
 
   <script>
     const vscode = acquireVsCodeApi();
+    const POLICY_CATALOG = ${JSON.stringify(TOOL_POLICY_CATALOG)};
     const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const stamp = s => {
       if (!s) return '—';
@@ -407,6 +505,7 @@ export function renderConsoleHtml(
         if (stage === 'page_stale') return 'Page Stale';
         if (stage === 'host_error') return 'Host Error';
         if (stage === 'workflow_result') return 'Workflow Result';
+        if (stage === 'browser_handoff') return 'Browser Hand-off';
         return stage.replace(/_/g, ' ');
       }
       return tool || '—';
@@ -421,13 +520,52 @@ export function renderConsoleHtml(
       return parts.join(' · ') || r.tool || '—';
     }
 
+    const POLICY_GROUPS = ${JSON.stringify(POLICY_GROUPS)};
+    // Toggles sent but not yet reflected by a refresh; keeps a periodic
+    // refresh computed before the save from flipping the switch back.
+    const pendingPolicy = {};
+
+    function renderPolicyRowClient(rule, state) {
+      const enabled = Object.prototype.hasOwnProperty.call(state, rule.id) ? state[rule.id] : rule.defaultEnabled;
+      const group = POLICY_GROUPS.find(g => g.kind === rule.kind) || POLICY_GROUPS[0];
+      return '<div class="policy-row">' +
+        '<label class="switch"><input type="checkbox" class="policy-toggle" data-rule="' + esc(rule.id) + '" ' + (enabled ? 'checked' : '') + '><span class="slider"></span></label>' +
+        '<div class="policy-info">' +
+          '<div class="policy-label"><span class="badge badge-stage">' + group.badge + '</span>' + esc(rule.label) +
+          '<span class="badge badge-' + (enabled ? 'allow' : 'deny') + '">' + (enabled ? group.on : group.off) + '</span></div>' +
+          '<div class="policy-desc">' + esc(rule.description) + '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function renderPolicyListClient(saved) {
+      const state = Object.assign({}, saved);
+      for (const id of Object.keys(pendingPolicy)) {
+        if (saved[id] === pendingPolicy[id]) delete pendingPolicy[id];
+        else state[id] = pendingPolicy[id];
+      }
+      return POLICY_GROUPS.map(group =>
+        '<div class="policy-group"><div class="policy-group-title">' + group.title + '</div><div class="policy-group-hint">' + group.hint + '</div></div>' +
+        POLICY_CATALOG.filter(rule => rule.kind === group.kind).map(rule => renderPolicyRowClient(rule, state)).join(''),
+      ).join('');
+    }
+
+    document.getElementById('policyList').addEventListener('change', event => {
+      const target = event.target;
+      if (!target || !target.classList || !target.classList.contains('policy-toggle')) return;
+      const ruleId = target.getAttribute('data-rule');
+      const enabled = target.checked;
+      pendingPolicy[ruleId] = enabled;
+      // If the save failed, fall back to the saved state after a few refreshes.
+      setTimeout(() => { if (pendingPolicy[ruleId] === enabled) delete pendingPolicy[ruleId]; }, 5000);
+      vscode.postMessage({ type: 'toggleTool', ruleId, enabled });
+    });
+
     document.getElementById('clear').onclick = () => {
       const button = document.getElementById('clear');
       if (button) button.textContent = 'Clearing…';
       vscode.postMessage({ type: 'clearLogs' });
     };
-    document.getElementById('start').onclick = () => vscode.postMessage({ type: 'startBrowser' });
-    document.getElementById('run').onclick = () => vscode.postMessage({ type: 'runBrowser' });
     document.getElementById('stop').onclick = () => vscode.postMessage({ type: 'stopBrowser' });
     document.getElementById('runWorkflow').onclick = () => {
       const prompt = document.getElementById('prompt').value.trim();
@@ -455,7 +593,11 @@ export function renderConsoleHtml(
       document.getElementById('browserState').textContent = b.running ? 'Running' : 'Stopped';
       document.getElementById('browserMeta').textContent = b.running
         ? ((b.pageUrl ?? 'loading') + ' · ' + (b.observedActions ?? 0) + ' controls · ' + b.protocolCalls + ' CDP calls · ' + b.screenshots + ' screenshots · ' + (b.jevRequests ?? 0) + ' planner requests')
-        : 'Browser inactive. A browser prompt can start it automatically.';
+        : 'Browser idle. Ask Antigravity to browse a URL in its chat (or use the prompt above) and it starts automatically.';
+
+      if (data.toolPolicy) {
+        document.getElementById('policyList').innerHTML = renderPolicyListClient(data.toolPolicy);
+      }
 
       const rowsHtml = data.records.map(r => {
         const d = r.decision ?? r.verdict ?? 'info';
@@ -473,7 +615,7 @@ export function renderConsoleHtml(
           '</tr>';
       }).join('');
 
-      document.getElementById('rows').innerHTML = rowsHtml || '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No workflow events yet</td></tr>';
+      document.getElementById('rows').innerHTML = rowsHtml || '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No console logs yet</td></tr>';
     });
   </script>
 </body>

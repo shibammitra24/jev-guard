@@ -7,12 +7,12 @@
  *
  *   1. Validates that a guard daemon is reachable for the requested workspace.
  *   2. Forwards the Task string (and workspace) to the daemon's /v1/browser/task endpoint.
- *   3. Returns { verdict: 'deny', reason: <sidecar result> } so the agent receives
- *      the browser result through the hook's denial-reason channel.
+ *   3. Returns { verdict: 'deny', source: 'browser', reason: <sidecar result> } so
+ *      the agent receives the browser result through the hook's reason channel.
+ *      The agy adapter renders source 'browser' as task output, not as a block.
  *
- * Limitation: the agent sees the result as a denial reason rather than a
- * successful tool return.  This is the documented Phase 0 limitation and must
- * not be presented as transparent browser integration.
+ * Limitation: the host still delivers the text through its denial channel
+ * rather than as a successful tool return (documented Phase 0 limitation).
  */
 import type { GuardDecision, NormalizedToolCall } from 'jev-core';
 import { existsSync, readFileSync } from 'node:fs';
@@ -179,13 +179,12 @@ export async function runBrowserBridge(
     };
   }
 
-  // Return the sidecar result encoded as a denial reason.
-  // The agent receives this through the hook's reason channel.
-  // This is the documented Phase 0 limitation — not transparent integration.
+  // The deny verdict is only the transport for the result text (documented
+  // Phase 0 limitation); source 'browser' lets the adapter render it as output.
   return {
     verdict: 'deny',
-    reason: `[browser-sidecar] ${sidecaResult}`,
+    reason: sidecaResult,
     latencyMs: now() - started,
-    source: 'jev',
+    source: 'browser',
   };
 }

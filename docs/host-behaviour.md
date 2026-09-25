@@ -247,3 +247,59 @@ registration removed when VS Code deactivates or the extension is uninstalled.
 An `ask` decision is never auto-approved in this hook path: because a PreToolUse
 hook cannot present the extension confirmation UI, the sidecar stops and returns
 the reason. This keeps automatic operation fail-closed.
+
+### Primary entry point: Antigravity's own chat
+
+Users give browser tasks in Antigravity's normal prompt window. There is no
+separate "start browser" step and no CDP-endpoint or URL input box:
+
+- The URL is taken from the agent's `Task` text. If the task has no absolute
+  http(s) URL, the sidecar does not launch a browser and returns a message
+  asking for the exact URL, so the agent can retry with one.
+- Chrome is preferred; Microsoft Edge is used when Chrome is not installed.
+- The bridge result is returned with `source: 'browser'`. The `agy` adapter
+  renders it with a `[JEV FAST BROWSER RESULT]` prefix telling the agent the
+  task already ran, instead of `[BLOCKED BEFORE EXECUTION]`, which is reserved
+  for genuine safety denials. The host still shows it through its deny channel.
+- The decision log records the hand-off as `decision: "handoff"`,
+  `stage: "browser_handoff"`, and the extension logs the task's real outcome
+  (`done`/`blocked`/`failed`) as a separate `workflow_result` row.
+
+### Tool names seen in live logs — Sep 2026
+
+`search_web` (web search) and `grep_search` (code search) were observed in
+`~/.jev/decisions.jsonl` alongside the fixture-verified tools. The Guard Console
+maps `search_web` to the **Web search** toggle and `grep_search` to **Read files &
+search code**. Neither has a captured fixture yet, and neither is pre-filtered.
+
+### Autonomous browser policy
+
+The Guard Console has three toggle groups: agent tools, autonomous browser, and
+dangerous categories. The autonomous-browser toggles (all on by default) let a
+step whose Jev verdict is `ask` proceed without a human, but only when every
+danger signal is low (destructive, secrets, exfiltration, outside-workspace
+< 0.5 and risk < 2.5). A Jev `deny` always stops the task.
+
+- Low action-choice confidence on a step Jev judged safe is `ask` (it was a hard
+  deny); on a step that is already risky it is still `deny`. Scroll and wait are
+  not confidence-gated.
+- Text is typed only when it comes word-for-word from the task. Code extracts
+  candidates (quoted phrases, the phrase after "search for" / "look up" /
+  "type" / "enter", and the places in "from X to Y"); URLs, domains and e-mail
+  addresses are never candidates. Jev then chooses which candidate belongs in
+  the specific field, or NONE (confidence below 0.4 counts as NONE). The same
+  text is never typed twice into the same field, nor into a field that already
+  holds it. Jev never generates text.
+- Dangerous-category toggles: off (default) blocks the category outright; on
+  allows it with no Jev check (`source: 'policy'`).
+- If the page changes between a decision and its execution, the stale decision
+  is discarded before any mutation and the step is decided again on the fresh
+  page (at most three consecutive times). The page fingerprint covers URL, title,
+  scroll position and controls, not free page text.
+- The result returned to the agent ends with the final page's title, URL and up
+  to 3,000 characters of visible text, marked as untrusted page content. Only the
+  status line is written to the decision log.
+
+The Guard Console prompt box remains as a secondary entry point. Its browser
+route uses the same automatic launch (URL from the prompt text).
+`Jev: Start Fast Browser` and `Jev: Run Fast Browser Goal` were removed.

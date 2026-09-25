@@ -22,7 +22,7 @@ import {
   type BrowserBridgeEndpoint,
 } from '../src/adapters/browser-bridge';
 import { runGuard } from '../src/main';
-import type { NormalizedToolCall } from 'jev-core';
+import { defaultToolPolicyState, mergeToolPolicyState, type NormalizedToolCall } from 'jev-core';
 import type { GuardConfig } from '../src/config';
 
 // ---------------------------------------------------------------------------
@@ -40,6 +40,8 @@ const config: GuardConfig = {
   debug: false,
 };
 const logger = { append: vi.fn(), tail: () => [], watch: () => () => undefined };
+// Explicit, catalog-default policy so these tests never depend on a real ~/.jev/tool-policy.json.
+const toolPolicy = defaultToolPolicyState();
 
 const bridge: BrowserBridgeEndpoint = {
   endpoint: 'http://127.0.0.1:4312',
@@ -191,8 +193,8 @@ describe('runBrowserBridge() — sidecar interaction', () => {
   it('returns a deny with the sidecar result as reason', async () => {
     const result = await runBrowserBridge(browserCall(), bridge, { fetcher: okFetcher('Page expanded.') });
     expect(result.verdict).toBe('deny');
-    expect(result.reason).toContain('[browser-sidecar]');
-    expect(result.reason).toContain('Page expanded.');
+    expect(result.source).toBe('browser');
+    expect(result.reason).toBe('Page expanded.');
   });
 
   it('fails closed on HTTP 500 from the sidecar', async () => {
@@ -224,7 +226,7 @@ describe('runGuard() — browser branch routing', () => {
   it('routes browser_subagent to the bridge, never calls Jev ask()', async () => {
     const ask = vi.fn();
     const result = await runGuard(browserPayload(), ['--agent', 'agy'], {
-      config, logger, apiKey: 'key', ask,
+      config, toolPolicy, logger, apiKey: 'key', ask,
       browserBridge: bridge,
       bridgeFetcher: okFetcher('Clicked successfully.'),
     });
@@ -232,7 +234,8 @@ describe('runGuard() — browser branch routing', () => {
     // Bridge always returns deny carrying the sidecar result
     const parsed = JSON.parse(result) as { decision: string; reason: string };
     expect(parsed.decision).toBe('deny');
-    expect(parsed.reason).toContain('[browser-sidecar]');
+    expect(parsed.reason).toContain('[JEV FAST BROWSER RESULT]');
+    expect(parsed.reason).not.toContain('BLOCKED BEFORE EXECUTION');
     expect(parsed.reason).toContain('Clicked successfully.');
   });
 
@@ -248,16 +251,55 @@ describe('runGuard() — browser branch routing', () => {
     } as const;
     const ask = vi.fn().mockResolvedValue(safeAnswers);
     const result = await runGuard(shellPayload(), ['--agent', 'agy'], {
-      config, logger, apiKey: 'key', ask,
+      config, toolPolicy, logger, apiKey: 'key', ask,
     });
     expect(ask).toHaveBeenCalledOnce();
     expect(JSON.parse(result)).toMatchObject({ decision: 'allow' });
   });
 
+  it('browser automation toggled off in the Guard Console denies before reaching the bridge', async () => {
+    const ask = vi.fn();
+    const fetcher = okFetcher('Should never run.');
+    const offPolicy = mergeToolPolicyState({ tool_browser: false });
+    const result = await runGuard(browserPayload(), ['--agent', 'agy'], {
+      config, toolPolicy: offPolicy, logger, apiKey: 'key', ask,
+      browserBridge: bridge,
+      bridgeFetcher: fetcher,
+    });
+    expect(ask).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+    const parsed = JSON.parse(result) as { decision: string; reason: string };
+    expect(parsed.decision).toBe('deny');
+    expect(parsed.reason.toLowerCase()).toContain('turned off');
+  });
+
+  it('web search toggled off denies search_web and steers the agent to the browser', async () => {
+    const ask = vi.fn();
+    const payload = JSON.stringify({ toolCall: { name: 'search_web', args: { query: 'flights kolkata to paris' } }, workspacePaths: [WS] });
+    const result = await runGuard(payload, ['--agent', 'agy'], {
+      config, toolPolicy: mergeToolPolicyState({ tool_web_search: false }), logger, apiKey: 'key', ask,
+    });
+    expect(ask).not.toHaveBeenCalled();
+    const parsed = JSON.parse(result) as { decision: string; reason: string };
+    expect(parsed.decision).toBe('deny');
+    expect(parsed.reason).toContain('"Web search" is turned off');
+    expect(parsed.reason).toContain('browser_subagent');
+  });
+
+  it('browser automation off also denies the sidecar per-action calls', async () => {
+    const ask = vi.fn();
+    const payload = JSON.stringify({ toolCall: { name: 'browser_click', args: { action: { id: 'e1' } } }, workspacePaths: [WS] });
+    const result = await runGuard(payload, ['--agent', 'agy'], {
+      config, toolPolicy: mergeToolPolicyState({ tool_browser: false }), logger, apiKey: 'key', ask,
+    });
+    expect(ask).not.toHaveBeenCalled();
+    expect(JSON.parse(result)).toMatchObject({ decision: 'deny' });
+  });
+
   it('browser_subagent with no bridge configured is denied with explanation', async () => {
     const ask = vi.fn();
     const result = await runGuard(browserPayload(), ['--agent', 'agy'], {
-      config, logger, apiKey: 'key', ask,
+      config, toolPolicy, logger, apiKey: 'key', ask,
       browserBridge: null,
     });
     expect(ask).not.toHaveBeenCalled();
@@ -270,7 +312,7 @@ describe('runGuard() — browser branch routing', () => {
     const ask = vi.fn();
     const hangingFetcher = vi.fn(() => new Promise<Response>(() => undefined)) as unknown as typeof fetch;
     const result = await runGuard(browserPayload(), ['--agent', 'agy'], {
-      config, logger, apiKey: 'key', ask,
+      config, toolPolicy, logger, apiKey: 'key', ask,
       browserBridge: bridge,
       bridgeFetcher: hangingFetcher,
       watchdogMs: 10,
@@ -285,7 +327,7 @@ describe('runGuard() — browser branch routing', () => {
     const logged: unknown[] = [];
     const testLogger = { append: (r: unknown) => logged.push(r), tail: () => [], watch: () => () => undefined };
     await runGuard(browserPayload(), ['--agent', 'agy'], {
-      config, logger: testLogger, apiKey: 'key',
+      config, toolPolicy, logger: testLogger, apiKey: 'key',
       browserBridge: bridge,
       bridgeFetcher: okFetcher('Done.'),
     });
@@ -313,7 +355,7 @@ describe('Phase 0 fixtures — browser routing in runGuard', () => {
       const payload = readFileSync(join(FIXTURES_DIR, `agy-browser-${action}.json`), 'utf8');
       const ask = vi.fn();
       const result = await runGuard(payload, ['--agent', 'agy'], {
-        config, logger, apiKey: 'key', ask,
+        config, toolPolicy, logger, apiKey: 'key', ask,
         browserBridge: null, // no sidecar — expect noBridgeDecision
       });
       expect(ask).not.toHaveBeenCalled();

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runBrowserGoal, type BrowserSession, type BrowserSnapshot } from '../src/index.js';
+import { runBrowserGoal, StalePageError, type BrowserSession, type BrowserSnapshot } from '../src/index.js';
 import type { BrowserDecision } from '../src/decision.js';
 
 const page: BrowserSnapshot = {
@@ -62,5 +62,33 @@ describe('browser goal runner', () => {
     expect(result).toMatchObject({ status: 'denied', steps: 1, reason: 'unsafe' });
     // guardDecision deny fires before session.execute → no CDP calls
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('re-observes and decides again when a live page changes under the decision', async () => {
+    const execute = vi.fn()
+      .mockRejectedValueOnce(new StalePageError())
+      .mockResolvedValueOnce({ executed: true, decision: { decision: 'allow' as const, latencyMs: 1 } });
+    const observe = vi.fn(async () => page);
+    const session = { observe, execute } as unknown as BrowserSession;
+    const decide = vi.fn()
+      .mockResolvedValueOnce(allowDecision('CLICK', 'e1'))
+      .mockResolvedValueOnce(allowDecision('CLICK', 'e1'))
+      .mockResolvedValueOnce(allowDecision('DONE'));
+
+    const result = await runBrowserGoal(session, 'continue', guard, { decide });
+
+    expect(result.status).toBe('done');
+    expect(result.history).toEqual(['CLICK:e1:stale', 'CLICK:e1:allow']);
+    expect(decide).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up after repeated page changes and fails closed', async () => {
+    const execute = vi.fn().mockRejectedValue(new StalePageError());
+    const session = { observe: vi.fn(async () => page), execute } as unknown as BrowserSession;
+
+    await expect(runBrowserGoal(session, 'continue', guard, {
+      decide: async () => allowDecision('CLICK', 'e1'),
+    })).rejects.toBeInstanceOf(StalePageError);
+    expect(execute).toHaveBeenCalledTimes(4);
   });
 });
