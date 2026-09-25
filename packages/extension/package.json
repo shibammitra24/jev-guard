@@ -2,7 +2,7 @@
   "name": "jev-guard-extension",
   "publisher": "jev",
   "engines": { "vscode": ">=1.80.0" },
-  "version": "0.3.0",
+  "version": "0.3.10",
   "icon": "assets/jev.svg",
   "private": true,
   "main": "src/extension.ts",

@@ -12,6 +12,11 @@ export interface GuardServerOptions {
   port?: number;
   token?: string;
   deps?: RunDeps;
+  /**
+   * Optional extension-owned browser task executor.  It is deliberately only
+   * reachable through the same loopback token and workspace check as /decide.
+   */
+  browserTask?: (input: { task: string; taskName: string; workspace: string }) => Promise<string>;
 }
 
 export interface GuardServer {
@@ -61,7 +66,7 @@ export async function startGuardServer(options: GuardServerOptions): Promise<Gua
         return send(response, 503, { error: 'session invalidated' });
       }
 
-      if (request.method !== 'POST' || request.url !== '/v1/decide') {
+      if (request.method !== 'POST' || (request.url !== '/v1/decide' && request.url !== '/v1/browser/task')) {
         return send(response, 404, { error: 'not found' });
       }
 
@@ -70,7 +75,28 @@ export async function startGuardServer(options: GuardServerOptions): Promise<Gua
         return send(response, 401, { error: 'unauthorized' });
       }
 
-      const input = JSON.parse(await readBody(request)) as GuardedBrowserRequest;
+      const raw = JSON.parse(await readBody(request)) as unknown;
+
+      if (request.url === '/v1/browser/task') {
+        const input = raw && typeof raw === 'object' && !Array.isArray(raw)
+          ? raw as { task?: unknown; taskName?: unknown; workspace?: unknown }
+          : {};
+        if (!options.browserTask) return send(response, 503, { error: 'browser sidecar unavailable' });
+        if (typeof input.workspace !== 'string' || !isSameWorkspace(input.workspace, options.workspace)) {
+          return send(response, 403, { error: 'workspace mismatch' });
+        }
+        if (typeof input.task !== 'string' || !input.task.trim()) {
+          return send(response, 400, { error: 'browser task is required' });
+        }
+        const result = await options.browserTask({
+          task: input.task,
+          taskName: typeof input.taskName === 'string' && input.taskName.trim() ? input.taskName : 'browser task',
+          workspace: options.workspace,
+        });
+        return send(response, 200, { result });
+      }
+
+      const input = raw as GuardedBrowserRequest;
 
       // Phase 5: workspace validation using case-aware path comparison
       if (

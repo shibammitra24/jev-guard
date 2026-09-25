@@ -11,4 +11,28 @@ describe('guard server', () => {
     expect(logged).toEqual([expect.objectContaining({ agent: 'browser', actionId: 'e1', urlOrigin: 'https://example.com' })]);
     await server.close();
   });
+
+  it('runs a browser task only with the matching loopback token and workspace', async () => {
+    const workspace = 'C:\\demo';
+    const calls: string[] = [];
+    const server = await startGuardServer({
+      workspace,
+      browserTask: async input => { calls.push(`${input.workspace}:${input.task}`); return 'completed safely'; },
+    });
+    const body = JSON.stringify({ workspace, task: 'Open https://example.com', taskName: 'Read page' });
+    const unauth = await fetch(`http://127.0.0.1:${server.port}/v1/browser/task`, { method: 'POST', body });
+    expect(unauth.status).toBe(401);
+    const mismatch = await fetch(`http://127.0.0.1:${server.port}/v1/browser/task`, {
+      method: 'POST', headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: 'C:\\other', task: 'Open https://example.com' }),
+    });
+    expect(mismatch.status).toBe(403);
+    const ok = await fetch(`http://127.0.0.1:${server.port}/v1/browser/task`, {
+      method: 'POST', headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' }, body,
+    });
+    expect(ok.status).toBe(200);
+    await expect(ok.json()).resolves.toEqual({ result: 'completed safely' });
+    expect(calls).toEqual([`${workspace}:Open https://example.com`]);
+    await server.close();
+  });
 });

@@ -16,7 +16,7 @@ const guard = { endpoint: 'http://127.0.0.1:1', token: 'token' };
 function allowDecision(operation: string, target?: string): BrowserDecision {
   return {
     choice: { operation, target, confidence: 0.9, probabilities: {} },
-    signals: { destructive: 0, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 0 },
+    signals: { destructive: 0, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 0, userExplicit: 0, isWildcard: false },
     guardDecision: { verdict: 'allow' },
   };
 }
@@ -25,7 +25,7 @@ function allowDecision(operation: string, target?: string): BrowserDecision {
 function denyDecision(operation: string, target?: string): BrowserDecision {
   return {
     choice: { operation, target, confidence: 0.9, probabilities: {} },
-    signals: { destructive: 0.95, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 3.5 },
+    signals: { destructive: 0.95, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 3.5, userExplicit: 0, isWildcard: false },
     guardDecision: { verdict: 'deny', reason: 'unsafe' },
   };
 }

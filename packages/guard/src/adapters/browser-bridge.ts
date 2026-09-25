@@ -15,6 +15,9 @@
  * not be presented as transparent browser integration.
  */
 import type { GuardDecision, NormalizedToolCall } from 'jev-core';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { isSameWorkspace } from '../security';
 
 export interface BrowserBridgeEndpoint {
   /** Full loopback URL of the guard daemon, e.g. http://127.0.0.1:4312 */
@@ -32,6 +35,49 @@ export interface BrowserBridgeDeps {
   now?: () => number;
 }
 
+/** The extension publishes this short-lived, token-protected loopback record. */
+export function browserBridgeConfigPath(workspace: string): string {
+  return join(resolve(workspace), '.jev', 'browser-sidecar.json');
+}
+
+/**
+ * Read a bridge registration for exactly one workspace.  Invalid files and
+ * non-loopback endpoints are ignored so a hook never sends a task elsewhere.
+ */
+export function loadBrowserBridge(workspace: string | undefined): BrowserBridgeEndpoint | null {
+  if (!workspace) return null;
+  const path = browserBridgeConfigPath(workspace);
+  try {
+    if (!existsSync(path)) return null;
+    const value = JSON.parse(readFileSync(path, 'utf8')) as Partial<BrowserBridgeEndpoint>;
+    if (
+      typeof value.endpoint !== 'string' ||
+      typeof value.token !== 'string' || !value.token ||
+      typeof value.workspace !== 'string' ||
+      !isSameWorkspace(value.workspace, workspace)
+    ) return null;
+    const url = new URL(value.endpoint);
+    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return null;
+    return { endpoint: value.endpoint, token: value.token, workspace: value.workspace };
+  } catch {
+    return null;
+  }
+}
+
+/** Allow extension activation and hook invocation to converge without a race. */
+export async function waitForBrowserBridge(
+  workspace: string | undefined,
+  timeoutMs = 2_000,
+): Promise<BrowserBridgeEndpoint | null> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const bridge = loadBrowserBridge(workspace);
+    if (bridge) return bridge;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return loadBrowserBridge(workspace);
+}
+
 /**
  * Sentinel decision returned when no bridge endpoint is configured.
  * Denies the browser call and explains why the sidecar is unavailable.
@@ -41,7 +87,7 @@ export function noBridgeDecision(): GuardDecision {
     verdict: 'deny',
     reason:
       'Jev Guard: no browser sidecar is running for this workspace. ' +
-      'Start the sidecar from the extension before issuing browser commands.',
+      'Open this workspace in VS Code with the Jev Guard extension enabled, then retry the browser request.',
     latencyMs: 0,
     source: 'fallback',
   };
@@ -88,7 +134,7 @@ export async function runBrowserBridge(
 
   // Workspace mismatch — deny immediately without contacting the sidecar
   const callWorkspace = call.workspace ?? '';
-  if (callWorkspace && callWorkspace !== bridge.workspace) {
+  if (callWorkspace && !isSameWorkspace(callWorkspace, bridge.workspace)) {
     return workspaceMismatchDecision(callWorkspace, bridge.workspace);
   }
 

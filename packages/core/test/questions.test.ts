@@ -11,7 +11,7 @@ describe('buildGuardState', () => {
       raw: {},
     });
     expect(state).toBe(
-      'Agent: antigravity\nTool: run_command\nArguments:\n  a: "x"\n  z: 1\nWorkspace: C:/workspace',
+      'Agent: antigravity\nTool: run_command\nOperation class: unknown\nOperation context: requires contextual Jev evaluation\nInside selected workspace: false\nSensitive target: false\nReversible bounded edit: false\nArguments:\n  a: "x"\n  z: 1\nWorkspace: C:/workspace',
     );
   });
 

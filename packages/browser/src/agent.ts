@@ -24,7 +24,7 @@ export interface BrowserGoalOptions {
    * calling session.execute() so a deny stops execution before CDP is touched.
    */
   decide(snapshot: BrowserSnapshot, goal: string, history: string[]): Promise<BrowserDecision>;
-  confirm?: (reason: string, action: ObservedAction) => Promise<boolean>;
+  confirm?: (reason: string, action: ObservedAction, decision: BrowserDecision) => Promise<boolean>;
   resolveFill?: (action: ObservedAction, goal: string) => Promise<string | undefined>;
 }
 
@@ -101,6 +101,7 @@ export async function runBrowserGoal(
         guardDecision.reason ?? 'Jev Guard: confirm this browser action.',
         // pass the target action if we can resolve it, else a synthetic one
         selectedAction(snapshot, decision) ?? { id: choice.target ?? '', kind: 'click', label: choice.operation },
+        decision,
       );
       if (!confirmed) {
         history.push(`${choice.operation}:${choice.target ?? ''}:cancelled`);
@@ -135,7 +136,7 @@ export async function runBrowserGoal(
       confirmed: guardDecision.verdict === 'ask',
       confirm: options.confirm
         ? (execDecision, selected) =>
-            options.confirm!(execDecision.reason ?? 'Jev Guard: confirm this browser action.', selected)
+            options.confirm!(execDecision.reason ?? 'Jev Guard: confirm this browser action.', selected, decision)
         : undefined,
     });
 

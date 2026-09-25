@@ -422,7 +422,9 @@ export function renderConsoleHtml(
     }
 
     document.getElementById('clear').onclick = () => {
-      if (confirm('Clear all Jev logs?')) vscode.postMessage({ type: 'clearLogs' });
+      const button = document.getElementById('clear');
+      if (button) button.textContent = 'Clearing…';
+      vscode.postMessage({ type: 'clearLogs' });
     };
     document.getElementById('start').onclick = () => vscode.postMessage({ type: 'startBrowser' });
     document.getElementById('run').onclick = () => vscode.postMessage({ type: 'runBrowser' });
@@ -434,6 +436,11 @@ export function renderConsoleHtml(
 
     window.addEventListener('message', event => {
       const data = event.data;
+      if (data.type === 'logsCleared') {
+        const button = document.getElementById('clear');
+        if (button) button.textContent = 'Clear logs';
+        return;
+      }
       const summary = data.summary;
       const b = data.browser;
 

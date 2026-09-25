@@ -141,6 +141,12 @@ describe('parseBrowserChoice', () => {
     expect(result.target).toBeUndefined();
   });
 
+  it('accepts WAIT with no target choice because it is code-owned', () => {
+    const result = parseBrowserChoice(snapshot, makeAnswers('WAIT', undefined));
+    expect(result).toMatchObject({ operation: 'WAIT', confidence: 0.9 });
+    expect(result.target).toBeUndefined();
+  });
+
   // Requirement 1
   it('req 1 — rejects missing operation answer', () => {
     expect(() => parseBrowserChoice(snapshot, { answers: {} })).toThrow(/missing operation choice/i);
@@ -300,7 +306,7 @@ describe('runBrowserGoal — Phase 3 guard-before-CDP invariant', () => {
     const result = await runBrowserGoal(session, 'delete everything', guard, {
       decide: async () => ({
         choice: { operation: 'SUBMIT', target: 'e2', confidence: 0.9, probabilities: {} },
-        signals: { destructive: 0.95, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 3.5 },
+        signals: { destructive: 0.95, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 3.5, userExplicit: 0, isWildcard: false },
         guardDecision: { verdict: 'deny', reason: 'Jev Guard: destructive (p=0.95)' },
       } satisfies BrowserDecision),
     });
@@ -315,7 +321,7 @@ describe('runBrowserGoal — Phase 3 guard-before-CDP invariant', () => {
     const result = await runBrowserGoal(session, 'submit form', guard, {
       decide: async () => ({
         choice: { operation: 'SUBMIT', target: 'e2', confidence: 0.9, probabilities: {} },
-        signals: { destructive: 0.6, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 2.0 },
+        signals: { destructive: 0.6, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 2.0, userExplicit: 0, isWildcard: false },
         guardDecision: { verdict: 'ask', reason: 'Jev Guard: confirm submission.' },
       } satisfies BrowserDecision),
       confirm,
@@ -330,12 +336,12 @@ describe('runBrowserGoal — Phase 3 guard-before-CDP invariant', () => {
     const decide = vi.fn()
       .mockResolvedValueOnce({
         choice: { operation: 'CLICK', target: 'e1', confidence: 0.9, probabilities: {} },
-        signals: { destructive: 0, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 2.0 },
+        signals: { destructive: 0, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 2.0, userExplicit: 0, isWildcard: false },
         guardDecision: { verdict: 'ask', reason: 'Jev Guard: confirm.' },
       } satisfies BrowserDecision)
       .mockResolvedValueOnce({
         choice: { operation: 'DONE', confidence: 0.9, probabilities: {} },
-        signals: { destructive: 0, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 0 },
+        signals: { destructive: 0, secrets: 0, exfiltration: 0, outsideWorkspace: 0, risk: 0, userExplicit: 0, isWildcard: false },
         guardDecision: { verdict: 'allow' },
       } satisfies BrowserDecision);
 

@@ -5,5 +5,6 @@ export * from './browser';
 export * from './questions';
 export * from './policy';
 export * from './prefilter';
+export * from './operation';
 export * from './redact';
 export * from './client';

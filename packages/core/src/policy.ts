@@ -36,6 +36,34 @@ export function decide(
     }
   }
   if (signals.risk >= thresholds.denyRisk && signals.risk >= maxNoul) trigger = 'risk';
+
+  // ---------------------------------------------------------------------------
+  // Targeted-delete downgrade: if the action looks like a single-file delete
+  // the user explicitly requested, and it is NOT a wildcard/recursive delete,
+  // downgrade a potential deny → ask so the agent can confirm with the user.
+  //
+  // Conditions:
+  //   • userExplicit signal is high (≥ 0.75) — Jev thinks the user asked for it
+  //   • isWildcard is false — not rm -rf, del /s, Remove-Item -Recurse, etc.
+  //   • The destructive signal would otherwise push us into deny territory
+  //   • Overall risk is below the hard-deny threshold
+  // ---------------------------------------------------------------------------
+  if (
+    signals.userExplicit >= 0.75 &&
+    !signals.isWildcard &&
+    signals.risk < thresholds.denyRisk &&
+    maxNoul >= thresholds.denyNoul
+  ) {
+    return {
+      verdict: 'ask',
+      trigger: 'destructive',
+      reason:
+        `Jev Guard: destructive (p=${signals.destructive.toFixed(2)}, risk=${signals.risk.toFixed(1)}). ` +
+        'This looks like a direct user request on a specific file. ' +
+        'Please confirm: reply with "yes, proceed" to allow this action, then retry.',
+    };
+  }
+
   if (maxNoul >= thresholds.denyNoul || signals.risk >= thresholds.denyRisk) {
     const probability = trigger === 'risk' ? signals.risk : signals[trigger];
     return {

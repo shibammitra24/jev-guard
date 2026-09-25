@@ -16,6 +16,20 @@ export interface GuardSignals {
   exfiltration: number;
   outsideWorkspace: number;
   risk: number;
+  /**
+   * Jev-scored probability (0–1) that this action is a literal, direct
+   * instruction from the human user in the most recent turn.
+   * Used by policy to downgrade deny → ask for targeted user-requested deletes.
+   * Defaults to 0 when the question is not included in the answer set.
+   */
+  userExplicit: number;
+  /**
+   * Deterministic flag set by the prefilter: true if the command is a
+   * wildcard or recursive destructive operation (rm -rf, del /s, etc.).
+   * When true, the targeted-delete ask-downgrade is suppressed.
+   * Defaults to false.
+   */
+  isWildcard: boolean;
 }
 
 export interface GuardDecision {

@@ -8,6 +8,8 @@ const base: GuardSignals = {
   exfiltration: 0,
   outsideWorkspace: 0,
   risk: 0,
+  userExplicit: 0,
+  isWildcard: false,
 };
 
 describe('decide', () => {

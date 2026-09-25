@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { installGuard, uninstallGuard } from "../src/installer.js";
 import { setApiKey } from "../src/secrets.js";
 import { renderConsoleHtml, summarize } from "../src/console.js";
+import { clearDecisionLog } from "../src/extension.js";
 import { testGuard } from "../src/testGuard.js";
 
 describe("phase 4", () => {
@@ -16,5 +17,6 @@ describe("phase 4", () => {
     uninstallGuard(workspace); expect(JSON.parse(readFileSync(config, "utf8"))).toEqual({ other: { enabled: true } });
   });
   it("writes credentials and renders timestamped workflow metrics with log clearing", async () => { const home = mkdtempSync(join(tmpdir(), "jev-home-")); const stored: string[] = []; await setApiKey({ store: async (_k, v) => { stored.push(v); } }, " key ", home); expect(stored).toEqual(["key"]); const html = renderConsoleHtml([{ ts: "2026-09-24T12:00:00.000Z", decision: "deny", agent: "browser", tool: "browser_click", latencyMs: 4 }]); expect(html).toContain("Timestamp"); expect(html).toContain("Protected workflow"); expect(html).toContain("Run through Jev"); expect(html).toContain("runWorkflow"); expect(html).toContain("Clear logs"); expect(html).toContain("startBrowser"); expect(html).toContain("Fast Browser"); expect(summarize([{ decision: "deny", agent: "browser" }])).toMatchObject({ denied: 1, browser: 1 }); });
+  it("truncates the on-disk log used by the clear button", () => { const home = mkdtempSync(join(tmpdir(), "jev-home-")); const path = join(home, "decisions.jsonl"); writeFileSync(path, '{"decision":"deny"}\n'); clearDecisionLog(path); expect(readFileSync(path, "utf8")).toBe(""); });
   it("runs canned smoke payloads through an injected runner", async () => { const calls: string[] = []; const result = await testGuard("guard.js", async (_path, input) => { calls.push(input); return { decision: input.includes("rm -rf") ? "deny" : "allow" }; }); expect(result.safe.decision).toBe("allow"); expect(result.dangerous.decision).toBe("deny"); expect(calls).toHaveLength(2); });
 });

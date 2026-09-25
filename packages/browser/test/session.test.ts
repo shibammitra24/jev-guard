@@ -40,7 +40,7 @@ describe('guarded browser session', () => {
     };
     const session = await BrowserSession.create(cdp, 'C:\\demo', 'https://example.com');
     expect(session.targetId).toBe('target');
-    expect(calls).toEqual(['Target.createTarget', 'Target.attachToTarget', 'Page.enable', 'Emulation.setFocusEmulationEnabled', 'Page.navigate', 'Runtime.evaluate']);
+    expect(calls).toEqual(['Target.createTarget', 'Target.attachToTarget', 'Page.enable', 'Emulation.setFocusEmulationEnabled', 'Runtime.evaluate']);
   });
 
   it('does not send a mutation to CDP when the guard denies it', async () => {

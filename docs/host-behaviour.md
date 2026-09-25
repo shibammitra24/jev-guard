@@ -226,3 +226,24 @@ sidecar or the Jev decision logic.
 This decision is the Phase 0 gate: **do not claim transparent browser
 integration until the host can receive the adapter's result through a
 non-error channel.**
+
+### Automatic workspace sidecar lifecycle
+
+The extension now removes the manual CDP and URL prompts for the real
+Antigravity path. After **Jev: Install Antigravity Guard** in a workspace, the
+extension activates a loopback control endpoint only for that workspace and
+writes `.jev/browser-sidecar.json`. The file contains a random loopback token,
+endpoint, and matching workspace path—never the Typesafe API key—and is ignored
+by Git.
+
+When `browser_subagent` arrives, the hook reads that workspace-local record,
+forwards the task to `/v1/browser/task`, and the extension launches an isolated
+visible Chrome profile on demand. Every selected DOM action still passes through
+the Jev browser guard. The browser remains visible after the task for inspection.
+The target, CDP connection, browser process, and temporary profile are closed by
+**Stop**, the next task, workspace change, or extension shutdown. The control endpoint is invalidated and its
+registration removed when VS Code deactivates or the extension is uninstalled.
+
+An `ask` decision is never auto-approved in this hook path: because a PreToolUse
+hook cannot present the extension confirmation UI, the sidecar stops and returns
+the reason. This keeps automatic operation fail-closed.

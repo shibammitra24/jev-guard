@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { renderConsoleHtml, summarize, type DecisionRecord } from './console.js';
 import { FastBrowserController } from './fastBrowser.js';
-import { installGuard, uninstallGuard } from './installer.js';
+import { guardDisabledPath, installGuard, uninstallGuard } from './installer.js';
 import { collectContext } from './router/context.js';
 import { createExecutors } from './router/executors.js';
 import { createRegistry } from './router/registry.js';
@@ -19,6 +19,12 @@ export interface ExtensionContextLike { subscriptions?: { push(value: unknown): 
 
 const fastBrowser = new FastBrowserController();
 const decisionLogPath = join(homedir(), '.jev', 'decisions.jsonl');
+
+/** Truncate the shared audit log on Windows and other supported hosts. */
+export function clearDecisionLog(path = decisionLogPath): void {
+  mkdirSync(join(homedir(), '.jev'), { recursive: true });
+  writeFileSync(path, '', 'utf8');
+}
 
 function appendConsoleRecord(record: Record<string, unknown>): void {
   try {
@@ -38,7 +44,10 @@ export function activate(context?: ExtensionContextLike): void {
       showWarningMessage?: (message: string, options: { modal: boolean }, item: string) => Promise<string | undefined>;
       registerWebviewViewProvider?: (id: string, provider: unknown) => unknown;
     };
-    workspace?: { workspaceFolders?: Array<{ uri: { fsPath: string } }> };
+    workspace?: {
+      workspaceFolders?: Array<{ uri: { fsPath: string } }>;
+      onDidChangeWorkspaceFolders?: (listener: (event: { added?: Array<{ uri: { fsPath: string } }> }) => void) => unknown;
+    };
   };
   try { vscode = require('vscode') as typeof vscode; } catch { return; }
 
@@ -47,6 +56,17 @@ export function activate(context?: ExtensionContextLike): void {
     if (disposable) context.subscriptions?.push(disposable);
   };
   const chooseWorkspace = () => vscode.window?.showInputBox?.({ prompt: 'Absolute folder where Jev Guard should be active', value: vscode.workspace?.workspaceFolders?.[0]?.uri.fsPath ?? '' });
+  const activateWorkspaceBridge = async (workspace: string): Promise<void> => {
+    // This is intentionally workspace-local. The extension may be installed
+    // globally, but only the currently opened workspace receives a sidecar.
+    // Chrome is still never launched here; it starts only for a browser task.
+    if (existsSync(guardDisabledPath(workspace))) return;
+    await fastBrowser.activateBridge(workspace, async () => context.secrets?.get?.('typesafeApiKey'));
+    appendConsoleRecord({
+      route: 'browser', stage: 'browser_sidecar_ready', tool: 'browser_subagent',
+      decision: 'allow', reason: `Automatic browser sidecar ready for ${workspace}. Chrome starts only when requested.`, source: 'pipeline',
+    });
+  };
 
   const startBrowser = async (workspaceDir?: string, suggestedUrl?: string) => {
     const workspace = workspaceDir ?? await chooseWorkspace();
@@ -208,8 +228,20 @@ export function activate(context?: ExtensionContextLike): void {
   };
 
   register('jev.setApiKey', async () => { const key = await vscode.window?.showInputBox?.({ prompt: 'Typesafe API key', password: true }); if (key && context.secrets) await setApiKey(context.secrets, key, homedir()); });
-  register('jev.installGuard', async () => { const workspace = await chooseWorkspace(); if (workspace) return installGuard({ workspaceDir: workspace, homeDir: homedir(), guardSource: context.asAbsolutePath?.('guard.js') ?? 'guard.js' }); });
-  register('jev.uninstallGuard', async () => { const workspace = await chooseWorkspace(); if (workspace) return uninstallGuard(workspace); });
+  register('jev.installGuard', async () => {
+    const workspace = await chooseWorkspace();
+    if (!workspace) return;
+    const result = installGuard({ workspaceDir: workspace, homeDir: homedir(), guardSource: context.asAbsolutePath?.('guard.js') ?? 'guard.js' });
+    await activateWorkspaceBridge(workspace);
+    return result;
+  });
+  register('jev.uninstallGuard', async () => {
+    const workspace = await chooseWorkspace();
+    if (!workspace) return;
+    const result = uninstallGuard(workspace);
+    if (fastBrowser.status().workspace === workspace) await fastBrowser.stop();
+    return result;
+  });
   register('jev.testGuard', () => testGuard(context.asAbsolutePath?.('guard.js') ?? 'guard.js'));
   register('jev.startFastBrowser', () => startBrowser());
   register('jev.stopFastBrowser', async () => { const status = await fastBrowser.stop(); vscode.window?.showInformationMessage?.('Jev Fast Browser stopped'); return status; });
@@ -222,7 +254,15 @@ export function activate(context?: ExtensionContextLike): void {
     const refresh = () => { const records = read(); void view.webview.postMessage({ records: records.slice().reverse(), summary: summarize(records), browser: fastBrowser.status() }); };
     view.webview.html = renderConsoleHtml(read(), fastBrowser.status());
     const messages = view.webview.onDidReceiveMessage(message => {
-      if (message.type === 'clearLogs') { try { writeFileSync(decisionLogPath, '', 'utf8'); } catch { /* best effort */ } refresh(); }
+      if (message.type === 'clearLogs') {
+        try {
+          clearDecisionLog();
+          refresh();
+          void view.webview.postMessage({ type: 'logsCleared' });
+        } catch (error) {
+          vscode.window?.showErrorMessage?.(`Jev Guard could not clear logs: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       if (message.type === 'startBrowser') void vscode.commands?.executeCommand?.('jev.startFastBrowser').finally(refresh);
       if (message.type === 'stopBrowser') void vscode.commands?.executeCommand?.('jev.stopFastBrowser').finally(refresh);
       if (message.type === 'runBrowser') void vscode.commands?.executeCommand?.('jev.runFastBrowserGoal').finally(refresh);
@@ -235,8 +275,26 @@ export function activate(context?: ExtensionContextLike): void {
   const viewDisposable = vscode.window?.registerWebviewViewProvider?.('jev.console', provider);
   if (viewDisposable) context.subscriptions?.push(viewDisposable);
 
-  register('jev.openConsole', () => vscode.commands?.executeCommand?.('workbench.view.extension.jev'));
+  register('jev.openConsole', async () => {
+    const workspace = vscode.workspace?.workspaceFolders?.[0]?.uri.fsPath;
+    if (workspace) await activateWorkspaceBridge(workspace);
+    return vscode.commands?.executeCommand?.('workbench.view.extension.jev');
+  });
   register('jev.runCommand', async () => { const command = await vscode.window?.showInputBox?.({ prompt: 'What should Jev do?' }); if (!command) return; return routeCommand(command, collectContext(), { tool: 'search_error', confidence: 0 }, createRegistry(createExecutors({}))); });
+
+  const openWorkspace = vscode.workspace?.workspaceFolders?.[0]?.uri.fsPath;
+  if (openWorkspace) {
+    void activateWorkspaceBridge(openWorkspace).catch(error => {
+      appendConsoleRecord({ route: 'browser', stage: 'host_error', tool: 'browser_sidecar', decision: 'deny', reason: error instanceof Error ? error.message : String(error), source: 'pipeline' });
+    });
+  }
+  const workspaceChange = vscode.workspace?.onDidChangeWorkspaceFolders?.(event => {
+    const next = event.added?.[0]?.uri.fsPath;
+    if (next) void activateWorkspaceBridge(next).catch(error => {
+      appendConsoleRecord({ route: 'browser', stage: 'host_error', tool: 'browser_sidecar', decision: 'deny', reason: error instanceof Error ? error.message : String(error), source: 'pipeline' });
+    });
+  });
+  if (workspaceChange) context.subscriptions?.push(workspaceChange);
 }
 
 export async function deactivate(): Promise<void> { await fastBrowser.stop(); }

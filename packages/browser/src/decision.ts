@@ -1,7 +1,7 @@
 import type { GuardSignals, JevAnswers, JevAnswer } from 'jev-core';
 import { decide, DEFAULT_THRESHOLDS, type PolicyDecision, type Thresholds } from 'jev-core';
 import type { BrowserChoice, BrowserSnapshot } from './types.js';
-import { compatibleActions, BROWSER_SIGNAL_KEYS } from './action-space.js';
+import { compatibleActions, BROWSER_SIGNAL_KEYS, CONTROL_OPERATIONS } from './action-space.js';
 
 // ---------------------------------------------------------------------------
 // Confidence thresholds
@@ -83,6 +83,14 @@ export function parseBrowserChoice(snapshot: BrowserSnapshot, result: JevAnswers
     throw new Error(`Browser Jev response: unsupported operation "${operation}" — no compatible observed actions`);
   }
 
+  // WAIT and SCROLL are code-owned control operations. Their concrete action
+  // is selected deterministically from the compatible group, so the question
+  // builder intentionally does not emit wait_target/scroll_target. Requiring a
+  // target answer here made every valid WAIT response fail at runtime.
+  if (CONTROL_OPERATIONS.includes(operation.toLowerCase() as typeof CONTROL_OPERATIONS[number])) {
+    return { operation, confidence: operationAnswer.confidence, probabilities: operationAnswer.probabilities };
+  }
+
   // Requirement 1 — target answer present and correct type
   const targetKey = `${operation.toLowerCase()}_target`;
   const targetAnswer = result.answers[targetKey];
@@ -139,6 +147,10 @@ export function parseBrowserDecision(
     exfiltration:     requireNoul(result.answers, 'exfiltration'),
     outsideWorkspace: requireNoul(result.answers, 'outsideWorkspace'),
     risk:             requireScore(result.answers, 'risk'),
+    // userExplicit: browser actions are never single-file targeted deletes; default to 0 (no downgrade)
+    userExplicit:     0,
+    // isWildcard: browser path never involves wildcard shell commands
+    isWildcard:       false,
   };
 
   // Validate every expected signal key is present (catches future schema drift)

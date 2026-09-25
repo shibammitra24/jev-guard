@@ -34,12 +34,15 @@ export class BrowserSession {
   ) {}
 
   static async create(cdp: CdpTransport, workspace: string, url = 'about:blank'): Promise<BrowserSession> {
-    const target = await cdp.call<{ targetId: string }>('Target.createTarget', { url: 'about:blank', background: false });
+    // Create the target at its final URL.  Doing this rather than creating an
+    // about:blank target followed by Page.navigate avoids a Chromium race where
+    // a newly-created visible target rejects that second navigation as invalid.
+    const initialUrl = normalizeInitialUrl(url);
+    const target = await cdp.call<{ targetId: string }>('Target.createTarget', { url: initialUrl, background: false });
     const attached = await cdp.call<{ sessionId: string }>('Target.attachToTarget', { targetId: target.targetId, flatten: true });
     await cdp.call('Page.enable', {}, attached.sessionId);
     await cdp.call('Emulation.setFocusEmulationEnabled', { enabled: true }, attached.sessionId);
-    if (url !== 'about:blank') {
-      await cdp.call('Page.navigate', { url }, attached.sessionId);
+    if (initialUrl !== 'about:blank') {
       let loaded = false;
       for (let attempt = 0; attempt < 100; attempt += 1) {
         const state = await cdp.call<{ result?: { value?: { ready: string; url: string } } }>(
@@ -53,7 +56,7 @@ export class BrowserSession {
         }
         await new Promise(resolve => setTimeout(resolve, 50));
       }
-      if (!loaded) throw new BrowserSessionError(`Browser page did not finish loading: ${url}`);
+      if (!loaded) throw new BrowserSessionError(`Browser page did not finish loading: ${initialUrl}`);
     }
     return new BrowserSession(cdp, target.targetId, attached.sessionId, workspace);
   }
@@ -250,5 +253,18 @@ export class BrowserSession {
         this.sessionId,
       );
     }
+  }
+}
+
+function normalizeInitialUrl(value: string): string {
+  if (value === 'about:blank') return value;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('unsupported protocol');
+    }
+    return url.href;
+  } catch {
+    throw new BrowserSessionError(`Browser startup requires an absolute http(s) URL, received: ${JSON.stringify(value)}`);
   }
 }

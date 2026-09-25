@@ -1,9 +1,9 @@
-import { CORE_VERSION, GUARD_QUESTIONS, buildGuardState, decide, prefilter, redact, type GuardDecision, type JevAnswers, type NormalizedToolCall } from 'jev-core';
+import { CORE_VERSION, GUARD_QUESTIONS, assessOperation, buildGuardState, decide, isRoutineWorkspaceOperation, prefilter, isWildcardDelete, redact, type GuardDecision, type JevAnswers, type NormalizedToolCall, type OperationAssessment } from 'jev-core';
 import { loadApiKey } from './credentials';
 import { loadConfig, type GuardConfig } from './config';
 import { createLogger, type DecisionLogger } from './log';
 import { agyAdapter, isBrowserTool } from './adapters/agy';
-import { runBrowserBridge, type BrowserBridgeEndpoint } from './adapters/browser-bridge';
+import { runBrowserBridge, waitForBrowserBridge, type BrowserBridgeEndpoint } from './adapters/browser-bridge';
 
 const MAX_STDIN = 1024 * 1024;
 const WATCHDOG_MS = 4000;
@@ -33,7 +33,7 @@ export function fallbackDecision(reason = 'Jev Guard unavailable; ask the user b
   return { verdict: 'ask', reason, latencyMs: 0, source: 'fallback' };
 }
 
-export function signalsFromAnswers(answers: JevAnswers) {
+export function signalsFromAnswers(answers: JevAnswers, isWildcard = false) {
   const value = (name: string): number => {
     const answer = answers.answers[name];
     if (!answer || answer.type !== 'noul' || !Number.isFinite(answer.noul)) {
@@ -45,24 +45,51 @@ export function signalsFromAnswers(answers: JevAnswers) {
   if (!risk || risk.type !== 'score' || !Number.isFinite(risk.score)) {
     throw new Error('Missing or invalid score answer: risk');
   }
+  // userExplicit is optional — defaults to 0 when not present (safe: no downgrade)
+  const userExplicitAnswer = answers.answers.userExplicit;
+  const userExplicit =
+    userExplicitAnswer && userExplicitAnswer.type === 'noul' && Number.isFinite(userExplicitAnswer.noul)
+      ? userExplicitAnswer.noul
+      : 0;
   return {
     destructive: value('destructive'),
     secrets: value('secrets'),
     exfiltration: value('exfiltration'),
     outsideWorkspace: value('outsideWorkspace'),
     risk: risk.score,
+    userExplicit,
+    isWildcard,
   };
 }
 
 function record(call: NormalizedToolCall | undefined, decision: GuardDecision): Record<string, unknown> | undefined {
   if (!call) return undefined;
+  const operation = assessOperation(call);
   return {
     ts: new Date().toISOString(),
     agent: call.agent,
     tool: call.tool,
     argsRedacted: redact(call.args),
+    operationClass: operation.operationClass,
+    targetPath: operation.targetPath,
+    insideWorkspace: operation.insideWorkspace,
+    reversibleEdit: operation.reversibleEdit,
     ...decision,
   };
+}
+
+function deterministicDecision(operation: OperationAssessment, now: () => number, started: number): GuardDecision | undefined {
+  const latencyMs = now() - started;
+  if (operation.operationClass === 'destructive' || operation.operationClass === 'exfiltration' || operation.operationClass === 'outside_workspace' || operation.operationClass === 'guard_tampering') {
+    return { verdict: 'deny', reason: `Jev Guard: ${operation.reason}. This action was blocked.`, latencyMs, source: 'prefilter' };
+  }
+  if (operation.operationClass === 'secret_access') {
+    return { verdict: 'ask', reason: `Jev Guard: ${operation.reason}. Confirm before retrying.`, latencyMs, source: 'prefilter' };
+  }
+  if (isRoutineWorkspaceOperation(operation)) {
+    return { verdict: 'allow', reason: `Jev Guard: ${operation.reason}.`, latencyMs, source: 'prefilter' };
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,12 +105,16 @@ async function evaluate(
 ): Promise<GuardDecision> {
   const started = now();
   if (!config.enabled) return { verdict: 'allow', latencyMs: now() - started, source: 'disabled' };
+  const operation = assessOperation(call);
+  const classified = deterministicDecision(operation, now, started);
+  if (classified) return classified;
   if (prefilter(call, config.prefilterTools) === 'allow') return { verdict: 'allow', latencyMs: now() - started, source: 'prefilter' };
   const answers = await ask(buildGuardState(call), GUARD_QUESTIONS, {
     apiKey,
     timeoutMs: config.timeoutMs,
   });
-  const decision = decide(signalsFromAnswers(answers), call.agent, config.thresholds);
+  const wildcard = isWildcardDelete(call);
+  const decision = decide(signalsFromAnswers(answers, wildcard), call.agent, config.thresholds);
   return { ...decision, latencyMs: now() - started, source: 'jev' };
 }
 
@@ -113,16 +144,21 @@ export async function runGuard(input: string, argv: string[] = ['--agent', 'agy'
     // -----------------------------------------------------------------------
     if (isBrowserTool(call)) {
       // Bridge path — watchdog still applies
-      const bridgeWork = runBrowserBridge(
-        call,
-        deps.browserBridge ?? null,
+      const bridgeWork = (deps.browserBridge !== undefined
+        ? Promise.resolve(deps.browserBridge)
+        : waitForBrowserBridge(call.workspace)
+      ).then(bridge => runBrowserBridge(
+        call!,
+        bridge,
         { fetcher: deps.bridgeFetcher, now },
-      );
+      ));
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<GuardDecision>((resolve) => {
         timer = setTimeout(
           () => resolve(fallbackDecision('Jev Guard: browser sidecar timed out; browser task was not executed.')),
-          deps.watchdogMs ?? WATCHDOG_MS,
+          // Browser goals can include a real navigation. The Antigravity hook
+          // has its own timeout; this merely prevents an orphaned CLI process.
+          deps.watchdogMs ?? 90_000,
         );
       });
       decision = await Promise.race([bridgeWork, timeout]);

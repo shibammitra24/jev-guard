@@ -40,8 +40,31 @@ describe('guard pipeline', () => {
     expect(ask).not.toHaveBeenCalled();
   });
 
+  it('allows bounded non-secret source edits inside the selected workspace without Jev', async () => {
+    const ask = vi.fn();
+    const output = await runGuard(JSON.stringify({
+      toolCall: { name: 'replace_file_content', args: { TargetFile: 'src/main.jsx', CodeContent: 'export default function App() {}' } },
+      workspacePaths: ['C:/workspace'],
+    }), ['--agent', 'agy'], { config, logger, apiKey: 'test', ask });
+    expect(output).toBe('{"decision":"allow"}');
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it('blocks an edit that escapes the selected workspace without Jev', async () => {
+    const ask = vi.fn();
+    const output = await runGuard(JSON.stringify({
+      toolCall: { name: 'write_to_file', args: { TargetFile: '../outside.txt', CodeContent: 'no' } },
+      workspacePaths: ['C:/workspace'],
+    }), ['--agent', 'agy'], { config, logger, apiKey: 'test', ask });
+    expect(output).toContain('"decision":"deny"');
+    expect(ask).not.toHaveBeenCalled();
+  });
+
   it('calls Jev and renders its decision', async () => {
-    const output = await runGuard(payload, ['--agent', 'agy'], {
+    const output = await runGuard(JSON.stringify({
+      toolCall: { name: 'run_command', args: { CommandLine: 'echo hello' } },
+      workspacePaths: ['C:/workspace'],
+    }), ['--agent', 'agy'], {
       config, logger, apiKey: 'test', ask: vi.fn().mockResolvedValue(safeAnswers),
     });
     expect(output).toBe('{"decision":"allow"}');
