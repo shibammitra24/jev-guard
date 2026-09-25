@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.vsix
+.jev/
+*.tsbuildinfo
+.env
+.env.*
+.agents/

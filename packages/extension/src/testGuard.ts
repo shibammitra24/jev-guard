@@ -1,0 +1,6 @@
+import { spawn } from "node:child_process";
+
+export interface GuardSmokeResult { safe: Record<string, unknown>; dangerous: Record<string, unknown>; }
+const payload = (name: string, args: Record<string, unknown>) => JSON.stringify({ toolCall: { name, args }, stepIdx: 1, conversationId: "phase4-smoke", workspacePaths: [], modelName: "test" });
+function invoke(guardPath: string, input: string): Promise<Record<string, unknown>> { return new Promise((resolve, reject) => { const child = spawn(process.execPath, [guardPath, "--agent", "agy"], { stdio: ["pipe", "pipe", "pipe"] }); let out = ""; let err = ""; child.stdout.on("data", (chunk: Buffer) => { out += chunk.toString(); }); child.stderr.on("data", (chunk: Buffer) => { err += chunk.toString(); }); child.on("error", reject); child.on("close", code => { if (code !== 0) reject(new Error(err || `guard exited ${code}`)); else { try { resolve(JSON.parse(out.trim()) as Record<string, unknown>); } catch { reject(new Error(`invalid guard output: ${out}`)); } } }); child.stdin.end(input); }); }
+export async function testGuard(guardPath: string, runner = invoke): Promise<GuardSmokeResult> { return { safe: await runner(guardPath, payload("view_file", { path: "README.md" })), dangerous: await runner(guardPath, payload("run_command", { command: "rm -rf ./src" })) }; }

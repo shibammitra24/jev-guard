@@ -1,0 +1,19 @@
+{
+  "name": "jev-guard-cli",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/main.ts",
+  "exports": {
+    ".": "./src/main.ts",
+    "./server": "./src/server.ts",
+    "./adapters/browser-bridge": "./src/adapters/browser-bridge.ts",
+    "./security": "./src/security.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jev-core": "*"
+  }
+}

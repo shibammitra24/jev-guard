@@ -1,0 +1,14 @@
+{
+  "name": "jev-fast-browser",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jev-core": "*",
+    "ws": "^8.18.3"
+  }
+}

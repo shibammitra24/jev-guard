@@ -1,0 +1,33 @@
+{
+  "date": "2026-09-24",
+  "environment": {
+    "chrome": "Chrome/153.0.8010.54",
+    "platform": "win32",
+    "node": "v24.19.0",
+    "runsPerTask": 5,
+    "tasks": 3
+  },
+  "screenshotLoop": {
+    "runs": 15,
+    "meanMs": 135.04286,
+    "p50Ms": 111.4895,
+    "p95Ms": 260.0615,
+    "protocolCalls": 195,
+    "screenshots": 50,
+    "guardRequests": 50,
+    "dangerousMutations": 0
+  },
+  "fastGuard": {
+    "runs": 15,
+    "meanMs": 8.065373333333298,
+    "p50Ms": 7.475,
+    "p95Ms": 11.7837,
+    "protocolCalls": 95,
+    "screenshots": 0,
+    "guardRequests": 50,
+    "dangerousMutations": 0
+  },
+  "meanWallTimeReduction": 0.9402754552641043,
+  "protocolCallReduction": 0.5128205128205128,
+  "scope": "Local browser observation and execution loop; excludes remote Jev/model and public network latency."
+}

@@ -1,0 +1,16 @@
+{
+  "jev-guard-debug": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.jev/log-hook.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

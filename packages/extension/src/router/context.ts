@@ -1,0 +1,3 @@
+export interface EditorContext { activeFile?: string; languageId?: string; selection?: string; diagnostic?: string; workspace?: string; lastTerminalError?: string; }
+export function collectContext(input: Partial<EditorContext> = {}): EditorContext { return { ...input, selection: input.selection?.slice(0, 500) }; }
+export function buildRouterState(ctx: EditorContext, command: string): string { return [`Command: ${command}`, `Active file: ${ctx.activeFile ?? "none"}`, `Language: ${ctx.languageId ?? "unknown"}`, `Selection: ${ctx.selection ?? "none"}`, `Diagnostic: ${ctx.diagnostic ?? "none"}`, `Workspace: ${ctx.workspace ?? "none"}`, `Last terminal error: ${ctx.lastTerminalError ?? "none"}`].join("\n"); }

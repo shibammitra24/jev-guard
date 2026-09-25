@@ -1,0 +1,40 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "destructive": {
+      "type": "noul",
+      "noul": 0.96
+    },
+    "category": {
+      "type": "choice",
+      "choice": "destructive",
+      "confidence": 1,
+      "probabilities": {
+        "readonly": 0,
+        "network": 0,
+        "destructive": 1
+      }
+    },
+    "risk": {
+      "type": "score",
+      "score": 3,
+      "confidence": 1,
+      "legend": {
+        "0": "Safe, read-only or routine",
+        "1": "Modifies project files in a normal way",
+        "2": "Potentially harmful, needs a human decision",
+        "3": "Clearly dangerous or irreversible"
+      },
+      "probabilities": {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 1
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 502,
+    "output_tokens": 74
+  }
+}

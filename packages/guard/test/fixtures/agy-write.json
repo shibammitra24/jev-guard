@@ -1,0 +1,19 @@
+{
+  "artifactDirectoryPath": "C:/Users/test/.gemini/antigravity-ide/brain/00000000-0000-4000-8000-000000000001",
+  "conversationId": "00000000-0000-4000-8000-000000000001",
+  "modelName": "gemini-3.1-pro-low",
+  "stepIdx": 7,
+  "toolCall": {
+    "args": {
+      "CodeContent": "probe",
+      "Description": "Creating hook-probe.txt",
+      "Overwrite": true,
+      "TargetFile": "C:\\workspace\\jev-guard\\.jev\\hook-probe.txt"
+    },
+    "name": "write_to_file"
+  },
+  "transcriptPath": "C:/Users/test/.gemini/antigravity-ide/brain/00000000-0000-4000-8000-000000000001/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "C:/workspace/jev-guard"
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "name": "jev-guard-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/core",
+    "packages/guard",
+    "packages/extension",
+    "packages/browser",
+    "eval"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run typecheck && node scripts/build.mjs",
+    "eval": "tsx eval/run.ts",
+    "eval:baseline": "tsx eval/compare.ts",
+    "eval:browser": "node eval/browser-benchmark.mjs",
+    "eval:browser:live": "node eval/live-browser-benchmark.mjs",
+    "demo:browser": "node scripts/demo-browser-server.mjs",
+    "package": "npm run build && node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

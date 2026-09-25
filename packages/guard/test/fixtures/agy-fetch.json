@@ -1,0 +1,16 @@
+{
+  "artifactDirectoryPath": "C:/Users/test/.gemini/antigravity-ide/brain/00000000-0000-4000-8000-000000000001",
+  "conversationId": "00000000-0000-4000-8000-000000000001",
+  "modelName": "gemini-3.1-pro-low",
+  "stepIdx": 9,
+  "toolCall": {
+    "args": {
+      "Url": "https://example.com"
+    },
+    "name": "read_url_content"
+  },
+  "transcriptPath": "C:/Users/test/.gemini/antigravity-ide/brain/00000000-0000-4000-8000-000000000001/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "C:/workspace/jev-guard"
+  ]
+}

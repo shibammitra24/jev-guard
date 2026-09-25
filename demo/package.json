@@ -1,0 +1,1 @@
+{"name":"jev-guard-demo","private":true,"scripts":{"test":"node -e \"console.log('demo tests passed')\""}}

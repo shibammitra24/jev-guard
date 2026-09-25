@@ -1,0 +1,21 @@
+{
+  "artifactDirectoryPath": "C:/Users/test/.gemini/antigravity-ide/brain/00000000-0000-4000-8000-000000000002",
+  "conversationId": "00000000-0000-4000-8000-000000000002",
+  "modelName": "gemini-3.1-pro-low",
+  "stepIdx": 1,
+  "toolCall": {
+    "args": {
+      "Task": "Navigate to http://127.0.0.1:4173 and return the page title. Stop as soon as the page has loaded.",
+      "TaskName": "Navigating to Local Demo",
+      "TaskSummary": "Open the local demo page and confirm it has loaded.",
+      "RecordingName": "navigate_demo",
+      "toolAction": "Navigating to URL",
+      "toolSummary": "Demo page navigation"
+    },
+    "name": "browser_subagent"
+  },
+  "transcriptPath": "C:/Users/test/.gemini/antigravity-ide/brain/00000000-0000-4000-8000-000000000002/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "C:/workspace/jev-guard"
+  ]
+}

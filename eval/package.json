@@ -1,0 +1,13 @@
+{
+  "name": "jev-guard-eval",
+  "version": "0.1.0",
+  "private": true,
+  "main": "run.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jev-core": "*"
+  }
+}
