@@ -43,6 +43,40 @@ describe('guarded browser session', () => {
     expect(calls).toEqual(['Target.createTarget', 'Target.attachToTarget', 'Page.enable', 'Emulation.setFocusEmulationEnabled', 'Runtime.evaluate']);
   });
 
+  it('adopts the tab Chrome opened instead of creating a second one', async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const cdp: CdpTransport = {
+      async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
+        calls.push({ method, params });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'launch', type: 'page', url: 'https://example.com/' },
+            { targetId: 'stray', type: 'page', url: 'chrome://newtab/' },
+            { targetId: 'worker', type: 'service_worker', url: 'https://example.com/sw.js' },
+          ] } as T;
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'session' } as T;
+        if (method === 'Runtime.evaluate' && String(params?.expression).startsWith('({ready')) {
+          return { result: { value: { ready: 'complete', url: 'https://example.com/', origin: 1 } } } as T;
+        }
+        if (method === 'Runtime.evaluate' && String(params?.expression).includes('readyState')) {
+          return { result: { value: 'complete|https://example.com/|3|1|0' } } as T;
+        }
+        return {} as T;
+      },
+      close() {}
+    };
+
+    const session = await BrowserSession.open(cdp, 'C:\demo', 'https://example.com');
+
+    expect(session.targetId).toBe('launch');
+    const methods = calls.map(call => call.method);
+    expect(methods).not.toContain('Target.createTarget');
+    expect(methods).not.toContain('Page.navigate');
+    expect(calls).toContainEqual({ method: 'Target.closeTarget', params: { targetId: 'stray' } });
+    expect(calls).not.toContainEqual({ method: 'Target.closeTarget', params: { targetId: 'launch' } });
+  });
+
   it('does not send a mutation to CDP when the guard denies it', async () => {
     const cdp = new FakeCdp();
     const guardFetch = vi.fn(async () => new Response(JSON.stringify({ decision: 'deny', reason: 'destructive', latencyMs: 3 }), { status: 200 }));

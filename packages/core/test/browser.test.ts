@@ -55,6 +55,8 @@ describe('isValidActionId', () => {
     expect(isValidActionId('e17')).toBe(true);
     expect(isValidActionId('btn42')).toBe(true);
     expect(isValidActionId('A1')).toBe(true);
+    expect(isValidActionId('scroll_down')).toBe(true);
+    expect(isValidActionId('scroll_up')).toBe(true);
   });
 
   it('rejects empty string', () => {

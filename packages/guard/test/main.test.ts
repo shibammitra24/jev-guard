@@ -128,4 +128,53 @@ describe('Guard Console allow/deny list', () => {
     expect(output).toContain('"decision":"deny"');
     expect(ask).not.toHaveBeenCalled();
   });
+
+  // Regression: assessOperation()'s regex only recognizes a handful of literal
+  // command shapes, so a real destructive command phrased any other way reaches
+  // Jev classified as operationClass 'unknown' and used to be judged solely on
+  // Jev's own signals — the toggle had no way to reach that path, so turning
+  // "Destructive file/git operations" on silently did nothing for it.
+  const destructiveAnswers = {
+    answers: {
+      destructive: { type: 'noul', noul: 0.93 },
+      secrets: { type: 'noul', noul: 0 },
+      exfiltration: { type: 'noul', noul: 0 },
+      outsideWorkspace: { type: 'noul', noul: 0 },
+      risk: { type: 'score', score: 0.7, confidence: 1, legend: {}, probabilities: { '0': 1 } },
+    },
+  } as const;
+  const unrecognizedDestructivePayload = JSON.stringify({
+    toolCall: { name: 'run_command', args: { CommandLine: 'Get-ChildItem -Recurse | Remove-Item -Force' } },
+    workspacePaths: ['C:/workspace'],
+  });
+
+  it('a command the regex misses is still denied by Jev\'s own signal when the category toggle is off', async () => {
+    const ask = vi.fn().mockResolvedValue(destructiveAnswers);
+    const output = await runGuard(unrecognizedDestructivePayload, ['--agent', 'agy'], { config, toolPolicy, logger, apiKey: 'test', ask });
+    expect(output).toContain('"decision":"deny"');
+    expect(ask).toHaveBeenCalled();
+  });
+
+  it('toggling the category on also allows a command the regex misses, once Jev flags it', async () => {
+    const ask = vi.fn().mockResolvedValue(destructiveAnswers);
+    const onPolicy = mergeToolPolicyState({ op_destructive: true });
+    const output = await runGuard(unrecognizedDestructivePayload, ['--agent', 'agy'], { config, toolPolicy: onPolicy, logger, apiKey: 'test', ask });
+    expect(output).toBe('{"decision":"allow"}');
+    expect(ask).toHaveBeenCalled();
+  });
+
+  it('a generic high-risk call with no specific category is still judged normally, toggle or not', async () => {
+    const ask = vi.fn().mockResolvedValue({
+      answers: {
+        destructive: { type: 'noul', noul: 0.1 },
+        secrets: { type: 'noul', noul: 0.1 },
+        exfiltration: { type: 'noul', noul: 0.1 },
+        outsideWorkspace: { type: 'noul', noul: 0.1 },
+        risk: { type: 'score', score: 2.9, confidence: 1, legend: {}, probabilities: { '0': 1 } },
+      },
+    });
+    const onPolicy = mergeToolPolicyState({ op_destructive: true, op_exfiltration: true, op_secret_access: true, op_outside_workspace: true });
+    const output = await runGuard(unrecognizedDestructivePayload, ['--agent', 'agy'], { config, toolPolicy: onPolicy, logger, apiKey: 'test', ask });
+    expect(output).toContain('"decision":"deny"');
+  });
 });

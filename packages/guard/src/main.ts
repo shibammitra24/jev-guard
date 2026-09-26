@@ -1,4 +1,4 @@
-import { CORE_VERSION, GUARD_QUESTIONS, assessOperation, buildGuardState, decide, isRoutineWorkspaceOperation, prefilter, isWildcardDelete, redact, resolveOperationRule, resolveToolRule, type GuardDecision, type JevAnswers, type NormalizedToolCall, type OperationAssessment, type ToolPolicyState } from 'jev-core';
+import { CORE_VERSION, GUARD_QUESTIONS, assessOperation, buildGuardState, decide, isRoutineWorkspaceOperation, prefilter, isWildcardDelete, redact, resolveOperationRule, resolveToolRule, type GuardDecision, type GuardSignals, type JevAnswers, type NormalizedToolCall, type OperationAssessment, type OperationClass, type PolicyDecision, type ToolPolicyState } from 'jev-core';
 import { loadApiKey } from './credentials';
 import { loadConfig, type GuardConfig } from './config';
 import { createLogger, type DecisionLogger } from './log';
@@ -117,8 +117,52 @@ function deterministicDecision(operation: OperationAssessment, toolPolicy: ToolP
 }
 
 // ---------------------------------------------------------------------------
-// Normal-tool evaluation path (unchanged)
+// Normal-tool evaluation path
 // ---------------------------------------------------------------------------
+
+/**
+ * Maps a PolicyDecision's `trigger` (the noul signal that drove it) to the
+ * matching Guard Console operation-class toggle.
+ *
+ * assessOperation()'s regex only recognizes a handful of literal command
+ * shapes (`rm -rf`, `del /s`, ...), so most real destructive/exfiltration/
+ * secret-access/outside-workspace calls reach Jev classified as `operationClass:
+ * 'unknown'` and are judged purely on Jev's own signals. Without this map the
+ * Console's operation toggles would only ever cover the regex's narrow cases —
+ * turning "Destructive file/git operations" on would do nothing for any
+ * destructive command the regex didn't happen to recognize, which is exactly
+ * the toggle silently not working. `risk` has no map entry: it is a holistic
+ * score, not one of the four categories the Console exposes.
+ */
+const TRIGGER_OPERATION_CLASS: Partial<Record<keyof GuardSignals, OperationClass>> = {
+  destructive: 'destructive',
+  exfiltration: 'exfiltration',
+  secrets: 'secret_access',
+  outsideWorkspace: 'outside_workspace',
+};
+
+/**
+ * Re-applies the Console's operation-class toggles to Jev's own verdict.
+ * Only overrides toward 'allow', and only when the matching toggle is ON —
+ * off (the default) leaves Jev's judgement untouched. This is the same
+ * "explicit user permission" semantics as the pre-Jev deterministic gate in
+ * deterministicDecision(), just reachable from whichever signal (regex or
+ * Jev) actually flagged the category.
+ */
+function applyOperationToggle(decision: PolicyDecision, toolPolicy: ToolPolicyState): PolicyDecision {
+  if (decision.verdict === 'allow' || !decision.trigger) return decision;
+  const operationClass = TRIGGER_OPERATION_CLASS[decision.trigger];
+  if (!operationClass) return decision;
+  const gate = resolveOperationRule(operationClass, toolPolicy);
+  if (!gate?.enabled) return decision;
+  // Keep Jev's own "why" (up to "...risk=N.NN)") but drop its "blocked"/"confirm"
+  // tail — that verdict is exactly what this toggle overrides.
+  const why = decision.reason?.match(/^(.*?risk=[\d.]+\))/)?.[1] ?? decision.reason ?? `Jev Guard: ${decision.trigger} risk detected`;
+  return {
+    verdict: 'allow',
+    reason: `${why}. Allowed — "${gate.rule.label}" is turned on in the Guard Console allow/deny list.`,
+  };
+}
 
 async function evaluate(
   call: NormalizedToolCall,
@@ -139,8 +183,9 @@ async function evaluate(
     timeoutMs: config.timeoutMs,
   });
   const wildcard = isWildcardDelete(call);
-  const decision = decide(signalsFromAnswers(answers, wildcard), call.agent, config.thresholds);
-  return { ...decision, latencyMs: now() - started, source: 'jev' };
+  const raw = decide(signalsFromAnswers(answers, wildcard), call.agent, config.thresholds);
+  const decision = applyOperationToggle(raw, toolPolicy);
+  return { ...decision, latencyMs: now() - started, source: decision === raw ? 'jev' : 'policy' };
 }
 
 // ---------------------------------------------------------------------------

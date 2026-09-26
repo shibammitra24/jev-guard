@@ -36,12 +36,16 @@ export const BROWSER_ACTION_TOOLS = [
  * decide whether a low-risk step may proceed without a human; a Jev deny, or
  * any destructive/secret/exfiltration signal, still stops the browser.
  *
- * 'operation' rules gate one of the deterministic OperationClass categories
- * from operation.ts (destructive, exfiltration, secret access, writes
- * outside the workspace, guard tampering). They default to DISABLED, which
- * hard-blocks these classes without ever calling Jev. Toggling one on is the
- * user's explicit permission: calls in that category are allowed without a
- * Jev check. A tool toggled off still wins over a category toggled on.
+ * 'operation' rules gate a risk category (destructive, exfiltration, secret
+ * access, writes outside the workspace, guard tampering). They default to
+ * DISABLED, which hard-blocks the category before Jev is asked whenever
+ * operation.ts's regex recognizes the call up front. Toggling one on is the
+ * user's explicit permission for that category: it allows the call outright
+ * both when the regex recognizes it (no Jev call) and — since most real
+ * commands don't match that regex's narrow literal shapes — when Jev's own
+ * risk judgement is what flags the category instead (guard/src/main.ts's
+ * applyOperationToggle re-checks the toggle against Jev's verdict). A tool
+ * toggled off still wins over a category toggled on.
  */
 export const TOOL_POLICY_CATALOG: readonly ToolPolicyRule[] = [
   {

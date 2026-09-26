@@ -1,4 +1,4 @@
-import { ask as jevAsk, type JevAnswers, type JevQuestion } from 'jev-core';
+import { ask as jevAsk, JevError, type JevAnswers, type JevQuestion } from 'jev-core';
 import type { ObservedAction } from 'jev-fast-browser';
 
 const URLISH = /\bhttps?:\/\/|\bwww\.|\b[\w-]+\.(?:com|org|net|io|in|co|gov|edu|dev|app|ai|uk|us)\b|@[\w-]+\./i;
@@ -55,7 +55,7 @@ export async function chooseFillText(
     page,
     field: { label: field.label, role: field.role, currentValue: field.currentValue ?? field.value ?? '' },
   });
-  const answers = await ask(state, {
+  const questions: Record<string, JevQuestion> = {
     fill_text: {
       type: 'choice',
       instructions:
@@ -64,7 +64,15 @@ export async function chooseFillText(
         'Choose NONE if the field is unrelated to the task or no text fits it.',
       criteria,
     },
-  }, { apiKey, timeoutMs: 3000 });
+  };
+  let answers: JevAnswers;
+  try {
+    answers = await ask(state, questions, { apiKey, timeoutMs: 8000 });
+  } catch (error) {
+    // One retry for a cold connection; anything else fails closed (no text typed).
+    if (!(error instanceof JevError) || (error.kind !== 'timeout' && error.kind !== 'network')) throw error;
+    answers = await ask(state, questions, { apiKey, timeoutMs: 8000 });
+  }
   const answer = answers.answers.fill_text;
   if (!answer || answer.type !== 'choice' || answer.choice === 'NONE' || answer.confidence < MIN_CONFIDENCE) return undefined;
   return candidates[Number(answer.choice.slice(1)) - 1];

@@ -89,6 +89,26 @@ describe('browser goal runner', () => {
     await expect(runBrowserGoal(session, 'continue', guard, {
       decide: async () => allowDecision('CLICK', 'e1'),
     })).rejects.toBeInstanceOf(StalePageError);
-    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(5);
+  });
+
+  it('stops offering WAIT once waiting no longer changes the page', async () => {
+    const withWait: BrowserSnapshot = { ...page, actions: [...page.actions, { id: 'wait', kind: 'wait', label: 'Wait for page update' }] };
+    const execute = vi.fn(async () => ({ executed: true, decision: { decision: 'allow' as const, latencyMs: 0 } }));
+    const afterAction = vi.fn(async () => {});
+    const session = { observe: vi.fn(async () => withWait), execute, afterAction } as unknown as BrowserSession;
+    const seen: string[][] = [];
+    const decide = vi.fn(async (snapshot: BrowserSnapshot) => {
+      seen.push(snapshot.actions.map(action => action.id));
+      return seen.length <= 2 ? allowDecision('WAIT') : allowDecision('DONE');
+    });
+
+    const result = await runBrowserGoal(session, 'continue', guard, { decide });
+
+    expect(result.status).toBe('done');
+    expect(seen[0]).toContain('wait');
+    expect(seen[1]).toContain('wait');
+    expect(seen[2]).not.toContain('wait');
+    expect(afterAction).toHaveBeenCalledTimes(2);
   });
 });

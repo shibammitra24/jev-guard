@@ -1,4 +1,4 @@
-import { ask, type JevAnswers } from 'jev-core';
+import { ask, JevError, type JevAnswers } from 'jev-core';
 import { buildBrowserQuestions, buildBrowserState, compatibleActions } from './action-space.js';
 import { parseBrowserDecision, type BrowserDecision } from './decision.js';
 import type { ExecutionResult, GuardEndpoint } from './session.js';
@@ -37,18 +37,31 @@ export interface BrowserGoalOptions {
  * parseBrowserDecision validates all answers and applies policy thresholds before
  * returning — the caller never receives an unvalidated answer.
  */
-export function createJevBrowserDecider(apiKey: string, timeoutMs = 3000): BrowserGoalOptions['decide'] {
+export function createJevBrowserDecider(apiKey: string, timeoutMs = 8000): BrowserGoalOptions['decide'] {
   return async (snapshot: BrowserSnapshot, goal: string, history: string[]): Promise<BrowserDecision> => {
-    const answers: JevAnswers = await ask(
-      buildBrowserState(snapshot, goal, history),
-      buildBrowserQuestions(snapshot, goal),
-      { apiKey, timeoutMs },
-    );
+    const state = buildBrowserState(snapshot, goal, history);
+    const questions = buildBrowserQuestions(snapshot, goal);
+    let answers: JevAnswers;
+    try {
+      answers = await ask(state, questions, { apiKey, timeoutMs });
+    } catch (error) {
+      // The first request of a session pays for DNS/TLS and a cold model; one
+      // retry keeps that from failing the whole task. Other errors fail closed.
+      if (!(error instanceof JevError) || (error.kind !== 'timeout' && error.kind !== 'network')) throw error;
+      answers = await ask(state, questions, { apiKey, timeoutMs });
+    }
     return parseBrowserDecision(snapshot, answers);
   };
 }
 
-const MAX_STALE_RETRIES = 3;
+const MAX_STALE_RETRIES = 4;
+/** After this many WAITs in a row with no page change, WAIT is no longer offered. */
+const MAX_CONSECUTIVE_WAITS = 2;
+
+/** Hide WAIT once waiting has stopped helping, so the model must act or finish. */
+function withoutWait(snapshot: BrowserSnapshot): BrowserSnapshot {
+  return { ...snapshot, actions: snapshot.actions.filter(action => action.kind !== 'wait') };
+}
 
 function isRetryablePageChange(error: unknown): boolean {
   if (error instanceof StalePageError) return true;
@@ -81,8 +94,10 @@ export async function runBrowserGoal(
   let snapshot = await session.observe();
   const maxSteps = Math.max(1, Math.min(options.maxSteps ?? 20, 50));
   let staleRetries = 0;
+  let waits = 0;
 
   for (let step = 0; step < maxSteps; step += 1) {
+    if (waits >= MAX_CONSECUTIVE_WAITS) snapshot = withoutWait(snapshot);
     const decision = await options.decide(snapshot, goal, history);
     const { choice, guardDecision } = decision;
 
@@ -157,6 +172,7 @@ export async function runBrowserGoal(
       staleRetries += 1;
       history.push(`${choice.operation}:${action.id}:stale`);
       await new Promise(resolve => setTimeout(resolve, 150 * staleRetries));
+      await session.settle?.();
       snapshot = await session.observe();
       continue;
     }
@@ -172,7 +188,10 @@ export async function runBrowserGoal(
       };
     }
 
+    await session.afterAction?.(action);
+    const previous = snapshot.fingerprint;
     snapshot = await session.observe();
+    waits = action.kind === 'wait' && snapshot.fingerprint === previous ? waits + 1 : 0;
   }
 
   return {

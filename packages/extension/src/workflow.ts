@@ -1,4 +1,5 @@
 import { runGuard } from 'jev-guard-cli';
+import { extractTaskUrl } from './taskUrl.js';
 
 export type WorkflowRoute = 'browser' | 'command';
 export interface CommandWorkflowResult { route: 'command'; decision: 'allow' | 'ask' | 'deny'; reason?: string; }
@@ -7,8 +8,7 @@ const BROWSER_WORDS = /\b(browser|browse|website|web page|url|navigate|click|ope
 const COMMAND_WORDS = /\b(rm|del|remove-item|powershell|bash|shell|terminal|command|npm|git|curl|wget|copy|move|delete|file|folder|directory)\b/i;
 
 export function extractPromptUrl(prompt: string): string | undefined {
-  const match = prompt.match(/https?:\/\/[^\s"'<>]+/i);
-  return match?.[0];
+  return extractTaskUrl(prompt);
 }
 
 export function classifyWorkflowPrompt(prompt: string): WorkflowRoute {

@@ -59,8 +59,8 @@ export interface GuardedBrowserResponse {
 // Validation helpers
 // ---------------------------------------------------------------------------
 
-/** Allowed action ID pattern: one or more alphanumeric characters. */
-const ACTION_ID_RE = /^[a-z][a-z0-9]{0,15}$/i;
+/** Allowed action ID pattern: a letter, then letters, digits or underscores (e.g. e17, scroll_down). */
+const ACTION_ID_RE = /^[a-z][a-z0-9_]{0,15}$/i;
 
 /**
  * Returns true when the string looks like an observed action ID.
