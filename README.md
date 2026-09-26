@@ -199,4 +199,4 @@ Antigravity (`agy`) is the host adapter that ships today — this is what `--age
 
 ## Built for HackNex Season 2
 
-Jev Guard was built by **Shibam Mitra** and **Piyush Paul** for the HackNex Season 2 hackathon. `docs/devfolio-submission.md` has the full write-up of the problem, the build challenges, and the technology choices.
+Jev Guard was built by **Shibam Mitra** for the HackNex Season 2 hackathon. `docs/devfolio-submission.md` has the full write-up of the problem, the build challenges, and the technology choices.
